@@ -1,0 +1,14 @@
+ID,Patient,Date & Time,Reason,Veterinarian,Status
+1,fanou,2024-11-20 17:20,shots,Dr. Smith,Scheduled
+2,bella,2024-11-21 17:27,shots,Dr. Jones,Completed
+3,sallie,2024-11-22 17:20,shot,Dr. Jones,Canceled
+4,bella,2024-11-21 17:34,shots,Dr. Smith,Canceled
+5,bella,2024-11-21 17:37,SHOTSS,Dr. Smith,Canceled
+6,bella,2024-11-22 13:39,NEUTERING,Dr. Smith,Completed
+7,hugo,2024-11-23 14:27,neutering,Dr. Smith,Completed
+8,cookies,2024-11-28 14:27,cannabis and/or marijuana,Dr. Jones,Scheduled
+9,cookies,2024-11-23 15:01,marijuana,Dr. Smith,Completed
+10,hugo,2024-11-22 15:31,dental,Dr. Jones,Completed
+11,cookies,2024-11-22 15:38,dental,Dr. Smith,Completed
+12,noelle,2024-12-03 16:48,birth,Dr. Smith,Completed
+13,bella,2024-11-24 18:55,shots,Dr. Souzana,Scheduled

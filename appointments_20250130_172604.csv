@@ -1,0 +1,5 @@
+ID,Patient,Date & Time,Type,Reason,Veterinarian,Status,Notification Status
+54,bella,2024-12-12 17:20,General,training,Dr. Souzana,Completed,Sent
+63,bella,2024-12-19 09:27,General,LORANS,Dr. Souzana,Scheduled,Not Sent
+64,bella,2024-12-27 15:29,Follow-Up,REMOVE STITCHES,Dr. Souzana,Scheduled,Not Sent
+66,bella,2025-01-18 16:02,Follow-Up,after dental,Dr. Souzana,Scheduled,Sent
