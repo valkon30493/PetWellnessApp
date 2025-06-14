@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QPushButton, QLabel,
     QLineEdit, QComboBox, QFormLayout, QHeaderView, QFileDialog, QMessageBox, QSpinBox, QDialog, QDoubleSpinBox
 )
+from PySide6 import QtGui
 import sqlite3
 import csv
 from logger import log_error  # Import the log_error function
@@ -146,12 +147,12 @@ class ItemizedBillingDialog(QDialog):
         self.unit_price_input.setRange(0.01, 10000.00)
         self.unit_price_input.setDecimals(2)
         self.unit_price_input.valueChanged.connect(self.calculate_total)
-        form_layout.addRow("Unit Price ($):", self.unit_price_input)
+        form_layout.addRow("Unit Price (€):", self.unit_price_input)
 
         # Total Price (Read-Only)
         self.total_price_label = QLineEdit("0.00")
         self.total_price_label.setReadOnly(True)
-        form_layout.addRow("Total Price ($):", self.total_price_label)
+        form_layout.addRow("Total Price (€):", self.total_price_label)
 
         layout.addLayout(form_layout)
 
@@ -189,33 +190,37 @@ class ItemizedBillingDialog(QDialog):
             self.calculate_total()
 
     def save_item(self):
-        """Save or update the item in the database."""
         description = self.description_input.text().strip()
+        if not description:
+            QMessageBox.warning(self, "Input Error", "Description is required.")
+            return
+
         quantity = self.quantity_input.value()
         unit_price = self.unit_price_input.value()
         total_price = quantity * unit_price
 
-        if not description:
-            QMessageBox.warning(self, "Input Error", "Please enter a valid description.")
-            return
+        try:
+            print("Invoice ID when saving item:", self.invoice_id)  # Debug
+            conn = sqlite3.connect("vet_management.db")
+            cursor = conn.cursor()
 
-        conn = sqlite3.connect("vet_management.db")
-        cursor = conn.cursor()
+            if self.item_id:
+                cursor.execute('''
+                    UPDATE invoice_items SET description = ?, quantity = ?, unit_price = ?, total_price = ?
+                    WHERE item_id = ?
+                ''', (description, quantity, unit_price, total_price, self.item_id))
+            else:
+                cursor.execute('''
+                    INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, total_price)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (self.invoice_id, description, quantity, unit_price, total_price))
 
-        if self.item_id:
-            cursor.execute('''
-                UPDATE invoice_items SET description = ?, quantity = ?, unit_price = ?, total_price = ?
-                WHERE item_id = ?
-            ''', (description, quantity, unit_price, total_price, self.item_id))
-        else:
-            cursor.execute('''
-                INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, total_price)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (self.invoice_id, description, quantity, unit_price, total_price))
+            conn.commit()
+            conn.close()
+            self.accept()  # ✅ Must be called to trigger reloading
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save item: {e}")
 
-        conn.commit()
-        conn.close()
-        self.accept()
 
 class BillingInvoicingScreen(QWidget):
     def __init__(self):
@@ -244,10 +249,11 @@ class BillingInvoicingScreen(QWidget):
 
         # Invoice Table
         self.invoice_table = QTableWidget()
-        self.invoice_table.setColumnCount(9)
+        self.invoice_table.setColumnCount(10)
         self.invoice_table.setHorizontalHeaderLabels([
             "Invoice ID", "Appointment ID", "Patient Name", "Total Amount",
-            "Final Amount", "Payment Status", "Payment Method", "Remaining Balance", "Created At"
+            "Final Amount", "Payment Status", "Payment Method", "Remaining Balance",
+            "Created At", "Appointment Date"
         ])
         self.invoice_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.invoice_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -256,9 +262,11 @@ class BillingInvoicingScreen(QWidget):
 
         # Summary Section
         self.summary_section = QHBoxLayout()
-        self.total_amount_label = QLabel("Total Amount: $0.00")
-        self.remaining_balance_label = QLabel("Remaining Balance: $0.00")
+        self.total_amount_label = QLabel("Total Amount: €0.00")
+        self.remaining_balance_label = QLabel("Remaining Balance: €0.00")
         self.payment_count_label = QLabel("Payments: 0")
+        self.item_count_label = QLabel("Items: 0")
+        self.summary_section.addWidget(self.item_count_label)
         self.summary_section.addWidget(self.total_amount_label)
         self.summary_section.addWidget(self.remaining_balance_label)
         self.summary_section.addWidget(self.payment_count_label)
@@ -296,6 +304,8 @@ class BillingInvoicingScreen(QWidget):
         # Form for invoice details
         form_layout = QFormLayout()
 
+        readonly_style = "background-color: #f0f0f0; color: #555;"
+
         self.appointment_id_input = QLineEdit()
         self.appointment_id_input.setPlaceholderText("Enter Appointment ID")
         self.appointment_id_input.textChanged.connect(self.fetch_patient_details)
@@ -306,6 +316,8 @@ class BillingInvoicingScreen(QWidget):
         form_layout.addRow("Patient Name:", self.patient_name_label)
 
         self.total_amount_input = QLineEdit()
+        self.total_amount_input.setReadOnly(True)  # Make total amount auto-calculated and non-editable
+        self.total_amount_input.setStyleSheet(readonly_style)
         self.total_amount_input.setPlaceholderText("Enter Total Amount")
         form_layout.addRow("Total Amount:", self.total_amount_input)
 
@@ -329,11 +341,13 @@ class BillingInvoicingScreen(QWidget):
         # Final Amount
         self.final_amount_label = QLineEdit()
         self.final_amount_label.setReadOnly(True)
+        self.final_amount_label.setStyleSheet(readonly_style)
         form_layout.addRow("Final Amount:", self.final_amount_label)
 
         # Remaining Balance
         self.remaining_balance_label = QLineEdit()
         self.remaining_balance_label.setReadOnly(True)
+        self.remaining_balance_label.setStyleSheet(readonly_style)
         form_layout.addRow("Remaining Balance:", self.remaining_balance_label)
 
         self.payment_status_dropdown = QComboBox()
@@ -355,6 +369,11 @@ class BillingInvoicingScreen(QWidget):
         self.edit_button = QPushButton("Edit Invoice")
         self.edit_button.setEnabled(False)
         self.edit_button.clicked.connect(self.edit_invoice)
+
+        self.finalize_button = QPushButton("Finalize Invoice")
+        self.finalize_button.setEnabled(False)  # Disabled until an invoice is created
+        self.finalize_button.clicked.connect(self.edit_invoice)  # Reuse existing logic
+        button_layout.addWidget(self.finalize_button)
 
         self.view_payments_button = QPushButton("View Payments")
         self.view_payments_button.setEnabled(False)
@@ -452,7 +471,7 @@ class BillingInvoicingScreen(QWidget):
                 SELECT i.invoice_id, i.appointment_id, (SELECT name FROM patients WHERE patient_id = a.patient_id),
                        i.total_amount, i.final_amount, i.payment_status, i.payment_method,
                        (i.final_amount - COALESCE((SELECT SUM(amount_paid) FROM payment_history WHERE invoice_id = i.invoice_id), 0)),
-                       i.created_at
+                       i.created_at, a.date_time
                 FROM invoices i
                 JOIN appointments a ON i.appointment_id = a.appointment_id
             ''')
@@ -475,7 +494,7 @@ class BillingInvoicingScreen(QWidget):
         payment_count = 0
 
         for invoice in self.invoices:
-            invoice_id, appointment_id, patient_name, total_amt, final_amt, status, _, balance, _ = invoice
+            invoice_id, appointment_id, patient_name, total_amt, final_amt, status, _, balance, _, appointment_date = invoice
             if search_text and search_text not in str(invoice_id).lower() and search_text not in patient_name.lower():
                 continue
             if status_filter == "Open" and status == "Paid":
@@ -491,41 +510,99 @@ class BillingInvoicingScreen(QWidget):
         # Update table
         self.invoice_table.setRowCount(0)
         for row_data in filtered_invoices:
-            self.invoice_table.insertRow(self.invoice_table.rowCount())
+            row_index = self.invoice_table.rowCount()
+            self.invoice_table.insertRow(row_index)
+
             for col_index, col_data in enumerate(row_data):
-                self.invoice_table.setItem(self.invoice_table.rowCount() - 1, col_index, QTableWidgetItem(str(col_data)))
+                item = QTableWidgetItem(str(col_data))
+
+                # Apply color-coding to the "Payment Status" column (index 5)
+                if col_index == 5:
+                    status = str(col_data).strip().lower()
+                    if status == "paid":
+                        item.setBackground(QtGui.QColor("#d4edda"))  # Light green
+                    elif status == "partially paid":
+                        item.setBackground(QtGui.QColor("#fff3cd"))  # Light yellow
+                    elif status == "unpaid":
+                        item.setBackground(QtGui.QColor("#f8d7da"))  # Light red
+                    else:
+                        item.setBackground(QtGui.QColor("white"))  # fallback
+
+                self.invoice_table.setItem(row_index, col_index, item)
 
         # Update summary
-        self.total_amount_label.setText(f"Total Amount: ${total_amount:.2f}")
-        self.remaining_balance_label.setText(f"Remaining Balance: ${remaining_balance:.2f}")
+        self.total_amount_label.setText(f"Total Amount: {total_amount:.2f}")
+        self.remaining_balance_label.setText(f"Remaining Balance: {remaining_balance:.2f}")
         self.payment_count_label.setText(f"Payments: {payment_count}")
 
     def load_selected_invoice(self):
-        """Load selected invoice details into the form."""
-        selected_row = self.invoice_table.currentRow()
-        if selected_row < 0:
+        """Load selected invoice details into the form from the database."""
+        # 1) figure out which row is selected in the QTableWidget
+        sel = self.invoice_table.currentRow()
+        if sel < 0:
             return
 
-        self.selected_invoice_id = int(self.invoice_table.item(selected_row, 0).text())
-        self.appointment_id_input.setText(self.invoice_table.item(selected_row, 1).text())
-        self.patient_name_label.setText(self.invoice_table.item(selected_row, 2).text())
-        self.total_amount_input.setText(self.invoice_table.item(selected_row, 3).text())
-        self.final_amount_label.setText(self.invoice_table.item(selected_row, 4).text())
-        self.payment_status_dropdown.setCurrentText(self.invoice_table.item(selected_row, 5).text())
-        self.payment_method_dropdown.setCurrentText(self.invoice_table.item(selected_row, 6).text())
+        # 2) grab the invoice_id out of the first column of that row
+        self.selected_invoice_id = int(self.invoice_table.item(sel, 0).text())
 
-        # Enable buttons only when an invoice is selected
+        # 3) fetch the *canonical* invoice row
+        conn = sqlite3.connect("vet_management.db")
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT appointment_id,
+                   total_amount,
+                   tax,
+                   discount,
+                   final_amount,
+                   remaining_balance,
+                   payment_status,
+                   payment_method
+            FROM invoices
+            WHERE invoice_id = ?
+        """, (self.selected_invoice_id,))
+        row = cur.fetchone()
+        conn.close()
+
+        if not row:
+            QMessageBox.critical(self, "Error",
+                                 "Could not load invoice details from the database.")
+            return
+
+        (appt_id,
+         total_amt,
+         tax_pct,
+         disc_pct,
+         final_amt,
+         rem_bal,
+         status,
+         method) = row
+
+        # 4) seed the form fields with exactly what’s in the DB
+        self.appointment_id_input.setText(str(appt_id))
+        self.total_amount_input.setText(f"{total_amt:.2f}")
+        self.tax_input.setValue(int(tax_pct))
+        self.discount_input.setValue(int(disc_pct))
+        self.final_amount_label.setText(f"{final_amt:.2f}")
+        self.remaining_balance_label.setText(f"{rem_bal:.2f}")
+        self.payment_status_dropdown.setCurrentText(status)
+        self.payment_method_dropdown.setCurrentText(method)
+
+        # 5) (optional) fetch & set the patient name + appointment date
+        self.fetch_patient_details()
+
+        # 6) re-enable your buttons
         self.edit_button.setEnabled(True)
         self.delete_button.setEnabled(True)
         self.view_payments_button.setEnabled(True)
-        self.add_payment_button.setEnabled(True)  # ✅ Fix: Ensure Add Payment button is enabled
-
-        self.selected_invoice_id = int(self.invoice_table.item(selected_row, 0).text())
+        self.add_payment_button.setEnabled(True)
         self.add_item_button.setEnabled(True)
+
+        # 7) now reload item rows (which will recalc totals if you call calculate_final_amount())
         self.load_invoice_items()
 
+
     def load_invoice_items(self):
-        """Load itemized billing for selected invoice."""
+        """Load itemized billing for selected invoice and update total amount."""
         conn = sqlite3.connect("vet_management.db")
         cursor = conn.cursor()
         cursor.execute('''
@@ -535,10 +612,16 @@ class BillingInvoicingScreen(QWidget):
         conn.close()
 
         self.item_table.setRowCount(0)
+        item_total = 0.0
         for row_data in items:
             self.item_table.insertRow(self.item_table.rowCount())
             for col_index, col_data in enumerate(row_data):
                 self.item_table.setItem(self.item_table.rowCount() - 1, col_index, QTableWidgetItem(str(col_data)))
+            item_total += float(row_data[3])
+
+        self.calculate_totals_from_items()  # More maintainable
+        self.item_count_label.setText(f"Items: {len(items)}")  # Show item count
+        self.calculate_final_amount()  # Recalculate with updated total
 
     def load_selected_item(self):
         """Enable edit and delete buttons when an item is selected."""
@@ -552,9 +635,9 @@ class BillingInvoicingScreen(QWidget):
         self.delete_item_button.setEnabled(True)
 
     def add_item(self):
-        """Open Add Item Dialog."""
         dialog = ItemizedBillingDialog(self.selected_invoice_id)
         if dialog.exec():
+            print("Dialog accepted, reloading items")  # Debug
             self.load_invoice_items()
 
     def edit_item(self):
@@ -613,88 +696,68 @@ class BillingInvoicingScreen(QWidget):
         appointment_id = self.appointment_id_input.text()
         if not appointment_id:
             self.patient_name_label.clear()
+            self.date_label.clear()
             return
 
         conn = sqlite3.connect("vet_management.db")
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT p.name
+            SELECT p.name, a.date_time
             FROM appointments a
             JOIN patients p ON a.patient_id = p.patient_id
             WHERE a.appointment_id = ?
         ''', (appointment_id,))
-        patient = cursor.fetchone()
+        result = cursor.fetchone()
         conn.close()
 
-        if patient:
-            self.patient_name_label.setText(patient[0])
+        if result:
+            patient_name, appointment_date = result
+            self.patient_name_label.setText(patient_name)
+            self.date_label.setText(appointment_date)
+            self.add_item_button.setEnabled(True)
         else:
             self.patient_name_label.clear()
+            self.date_label.clear()
+            self.add_item_button.setEnabled(False)
 
     def create_invoice(self):
-        """Create a new invoice and store items in the database."""
+        """Stage 1: Create a draft invoice entry so items can be added, then finalize it."""
         try:
             appointment_id = self.appointment_id_input.text().strip()
-            total_amount = self.total_amount_input.text().strip()
-            tax = self.tax_input.value()
-            discount = self.discount_input.value()
-            payment_status = self.payment_status_dropdown.currentText()
-            payment_method = self.payment_method_dropdown.currentText()
-
             if not appointment_id:
                 QMessageBox.warning(self, "Input Error", "Appointment ID is required.")
-                return
-
-            if not total_amount or float(total_amount) <= 0:
-                QMessageBox.warning(self, "Input Error", "Total amount must be greater than zero.")
-                return
-
-            if self.item_table.rowCount() == 0:
-                QMessageBox.warning(self, "Input Error", "At least one item must be added to the invoice.")
                 return
 
             conn = sqlite3.connect("vet_management.db")
             cursor = conn.cursor()
 
-            # **Check for duplicate invoices for the same appointment**
+            # Check for duplicate invoice
             cursor.execute("SELECT invoice_id FROM invoices WHERE appointment_id = ?", (appointment_id,))
             if cursor.fetchone():
                 QMessageBox.warning(self, "Duplicate Invoice", "An invoice already exists for this appointment.")
                 conn.close()
                 return
 
-            # **Insert new invoice**
+            # Insert draft invoice with zeroed values
             cursor.execute('''
                 INSERT INTO invoices (appointment_id, total_amount, tax, discount, final_amount, payment_status, payment_method)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (appointment_id, total_amount, tax, discount, total_amount, payment_status, payment_method))
+                VALUES (?, 0, 0, 0, 0, 'Unpaid', ?)
+            ''', (appointment_id, self.payment_method_dropdown.currentText()))
 
-            invoice_id = cursor.lastrowid  # Get newly created invoice ID
-
-            # **Insert all invoice items**
-            for row in range(self.item_table.rowCount()):
-                item_name = self.item_table.item(row, 0).text()
-                quantity = int(self.item_table.item(row, 1).text())
-                unit_price = float(self.item_table.item(row, 2).text())
-                total = float(self.item_table.item(row, 3).text())
-
-                cursor.execute('''
-                    INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, total_price)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (invoice_id, item_name, quantity, unit_price, total))
+            # Get and store the new invoice ID
+            self.selected_invoice_id = cursor.lastrowid
 
             conn.commit()
             conn.close()
 
-            QMessageBox.information(self, "Success", "Invoice created successfully.")
-            self.load_invoices()
-            self.clear_inputs()
-            self.clear_invoice_form()  # ✅ Clear the form after creating an invoice
-            pass
+            QMessageBox.information(self, "Invoice Created", "Draft invoice created. You can now add items.")
+            self.add_item_button.setEnabled(True)
+            self.finalize_button.setEnabled(True)
+            self.load_invoice_details(appointment_id)
 
         except Exception as e:
             log_error(f"Error in create_invoice: {str(e)}")
-            QMessageBox.critical(self, "Error", "Failed to create invoice.")
+            QMessageBox.critical(self, "Error", "Failed to create draft invoice.")
 
     def edit_invoice(self):
         """Edit an existing invoice and update associated items."""
@@ -702,47 +765,57 @@ class BillingInvoicingScreen(QWidget):
             QMessageBox.warning(self, "No Invoice Selected", "Please select an invoice to edit.")
             return
 
-        appointment_id = self.appointment_id_input.text()
-        total_amount = self.total_amount_input.text()
-        tax = self.tax_input.value()
-        discount = self.discount_input.value()
-        final_amount = self.final_amount_label.text()
-        payment_status = self.payment_status_dropdown.currentText()
-        payment_method = self.payment_method_dropdown.currentText()
+        appointment_id = self.appointment_id_input.text().strip()
+        if not appointment_id:
+            QMessageBox.warning(self, "Input Error", "Appointment ID is required.")
+            return
 
-        conn = sqlite3.connect("vet_management.db")
-        cursor = conn.cursor()
+        try:
+            total_amount, final_amount = self.calculate_totals_from_items()
+            tax = self.tax_input.value()
+            discount = self.discount_input.value()
+            payment_status = self.payment_status_dropdown.currentText()
+            payment_method = self.payment_method_dropdown.currentText()
 
-        # Update invoice details
-        cursor.execute('''
-            UPDATE invoices
-            SET appointment_id = ?, total_amount = ?, tax = ?, discount = ?, final_amount = ?, 
-                payment_status = ?, payment_method = ?
-            WHERE invoice_id = ?
-        ''', (appointment_id, total_amount, tax, discount, final_amount, payment_status, payment_method,
-              self.selected_invoice_id))
-
-        # Remove existing items and re-add them
-        cursor.execute("DELETE FROM invoice_items WHERE invoice_id = ?", (self.selected_invoice_id,))
-
-        for row in range(self.item_table.rowCount()):
-            item_name = self.item_table.item(row, 0).text()
-            quantity = int(self.item_table.item(row, 1).text())
-            unit_price = float(self.item_table.item(row, 2).text())
-            total = float(self.item_table.item(row, 3).text())
+            conn = sqlite3.connect("vet_management.db")
+            cursor = conn.cursor()
 
             cursor.execute('''
-                INSERT INTO invoice_items (invoice_id, item_name, quantity, unit_price, total)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (self.selected_invoice_id, item_name, quantity, unit_price, total))
+                UPDATE invoices
+                SET appointment_id = ?, total_amount = ?, tax = ?, discount = ?, final_amount = ?, 
+                    payment_status = ?, payment_method = ?
+                WHERE invoice_id = ?
+            ''', (appointment_id, total_amount, tax, discount, final_amount,
+                  payment_status, payment_method, self.selected_invoice_id))
 
-        conn.commit()
-        conn.close()
+            cursor.execute("DELETE FROM invoice_items WHERE invoice_id = ?", (self.selected_invoice_id,))
 
-        QMessageBox.information(self, "Success", "Invoice updated successfully.")
-        self.load_invoices()
-        self.clear_inputs()
-        self.clear_invoice_form()  # ✅ Clear the form after editing an invoice
+            for row in range(self.item_table.rowCount()):
+                description = self.item_table.item(row, 0).text().strip()
+                quantity = int(self.item_table.item(row, 1).text())
+                unit_price = float(self.item_table.item(row, 2).text())
+                total = float(self.item_table.item(row, 3).text())
+
+                cursor.execute('''
+                    INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, total_price)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (self.selected_invoice_id, description, quantity, unit_price, total))
+
+            conn.commit()
+            conn.close()
+
+            self.update_payment_status_and_balance(self.selected_invoice_id, final_amount)
+
+            QMessageBox.information(self, "Success", "Invoice updated successfully.")
+            self.finalize_button.setEnabled(False)
+            self.load_invoices()
+            self.clear_inputs()
+            self.clear_invoice_form()
+            self.calculate_final_amount()  # ✅ Refresh balance after editing
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Unexpected error: {str(e)}")
+
 
     def delete_invoice(self):
         """Delete the selected invoice."""
@@ -784,6 +857,7 @@ class BillingInvoicingScreen(QWidget):
 
         # Disable edit and delete buttons
         self.edit_button.setEnabled(False)
+        self.finalize_button.setEnabled(False)
         self.delete_button.setEnabled(False)
         self.view_payments_button.setEnabled(False)
         self.add_payment_button.setEnabled(False)
@@ -807,6 +881,45 @@ class BillingInvoicingScreen(QWidget):
             self.date_label.setText(appointment[2])  # Set the date in the date_label
         else:
             QMessageBox.warning(self, "Error", "Could not load appointment details.")
+
+    def calculate_totals_from_items(self):
+        """Recalculate total and final amounts from invoice items."""
+        item_total = 0.0
+        for row in range(self.item_table.rowCount()):
+            try:
+                total_price = float(self.item_table.item(row, 3).text())
+                item_total += total_price
+            except (ValueError, AttributeError):
+                continue
+
+        self.total_amount_input.setText(f"{item_total:.2f}")
+        tax = self.tax_input.value() / 100
+        discount = self.discount_input.value() / 100
+        final = item_total + (item_total * tax) - (item_total * discount)
+        self.final_amount_label.setText(f"{final:.2f}")
+
+        return item_total, final
+
+    def update_payment_status_and_balance(self, invoice_id, final_amount):
+        """Recalculate payment totals and update the invoice status."""
+        conn = sqlite3.connect("vet_management.db")
+        cursor = conn.cursor()
+        cursor.execute('SELECT COALESCE(SUM(amount_paid), 0) FROM payment_history WHERE invoice_id = ?', (invoice_id,))
+        total_paid = cursor.fetchone()[0]
+        remaining_balance = final_amount - total_paid
+
+        payment_status = (
+            "Paid" if remaining_balance <= 0 else
+            "Partially Paid" if remaining_balance < final_amount else
+            "Unpaid"
+        )
+
+        cursor.execute('''
+            UPDATE invoices SET remaining_balance = ?, payment_status = ? WHERE invoice_id = ?
+        ''', (remaining_balance, payment_status, invoice_id))
+
+        conn.commit()
+        conn.close()
 
     def export_to_csv(self):
         """Export invoice data to a CSV file."""
@@ -850,3 +963,4 @@ class BillingInvoicingScreen(QWidget):
 
         self.edit_button.setEnabled(False)
         self.delete_button.setEnabled(False)
+        self.finalize_button.setEnabled(False)

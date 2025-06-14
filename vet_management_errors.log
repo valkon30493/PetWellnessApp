@@ -1,0 +1,4 @@
+2025-06-12 12:39:16,454 - ERROR - Database Error in load_invoices: too many values to unpack (expected 9)
+2025-06-12 12:40:53,745 - ERROR - Database Error in load_invoices: too many values to unpack (expected 9)
+2025-06-12 12:44:10,999 - ERROR - Database Error in load_invoices: too many values to unpack (expected 9)
+2025-06-12 12:44:38,032 - ERROR - Database Error in load_invoices: too many values to unpack (expected 9)
