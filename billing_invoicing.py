@@ -1,15 +1,32 @@
+import win32print
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QPushButton, QLabel,
-    QLineEdit, QComboBox, QFormLayout, QHeaderView, QFileDialog, QMessageBox, QSpinBox, QDialog, QDoubleSpinBox
+    QLineEdit, QComboBox, QFormLayout, QHeaderView, QFileDialog, QMessageBox, QSpinBox, QDialog, QDoubleSpinBox,
+    QDateTimeEdit, QDateEdit
 )
+from PySide6.QtCore import QDateTime, QTimer, QDate, Signal
 from PySide6 import QtGui
+from PySide6.QtPrintSupport import QPrinter, QPrintDialog, QPrinterInfo
+from PySide6.QtGui import QTextDocument
+import tempfile
+import os
 import sqlite3
 import csv
 from logger import log_error  # Import the log_error function
-
+from datetime import datetime, timedelta
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import Image
+from reportlab.lib.units import mm
+from PySide6.QtCore import QDateTime, QTimer, QDate, Signal, QSizeF, QMarginsF, QUrl
+from PySide6.QtGui import QTextDocument, QPageSize, QPageLayout
+from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 
 class PaymentHistoryDialog(QDialog):
-    def __init__(self, invoice_id):
+    def __init__(self, invoice_id, parent=None):
         super().__init__()
         self.setWindowTitle("Payment History")
         self.invoice_id = invoice_id
@@ -149,6 +166,29 @@ class ItemizedBillingDialog(QDialog):
         self.unit_price_input.valueChanged.connect(self.calculate_total)
         form_layout.addRow("Unit Price (€):", self.unit_price_input)
 
+        # after unit_price_input…
+        self.vat_pct_input = QSpinBox()
+        self.vat_pct_input.setRange(0, 100)
+        self.vat_pct_input.setSuffix(" %")
+        self.vat_pct_input.valueChanged.connect(self.calculate_total)
+        form_layout.addRow("VAT Rate (%):", self.vat_pct_input)
+
+        # VAT Amount (Read-Only)
+        self.vat_amount_label = QLineEdit("0.00")
+        self.vat_amount_label.setReadOnly(True)
+        form_layout.addRow("VAT Amount (€):", self.vat_amount_label)
+
+        self.discount_pct_input = QSpinBox()
+        self.discount_pct_input.setRange(0, 100)
+        self.discount_pct_input.setSuffix(" %")
+        self.discount_pct_input.valueChanged.connect(self.calculate_total)
+        form_layout.addRow("Discount Rate (%):", self.discount_pct_input)
+
+        # Discount Amount (Read-Only)
+        self.discount_amount_label = QLineEdit("0.00")
+        self.discount_amount_label.setReadOnly(True)
+        form_layout.addRow("Discount Amount (€):", self.discount_amount_label)
+
         # Total Price (Read-Only)
         self.total_price_label = QLineEdit("0.00")
         self.total_price_label.setReadOnly(True)
@@ -170,7 +210,11 @@ class ItemizedBillingDialog(QDialog):
         """Calculate total price based on quantity and unit price."""
         quantity = self.quantity_input.value()
         unit_price = self.unit_price_input.value()
-        total = quantity * unit_price
+        vat = (self.vat_pct_input.value() / 100.0) * (quantity * unit_price)
+        self.vat_amount_label.setText(f"{vat:.2f}")
+        discount = (self.discount_pct_input.value() / 100.0) * (quantity * unit_price)
+        self.discount_amount_label.setText(f"{discount:.2f}")
+        total = (quantity * unit_price) + vat - discount
         self.total_price_label.setText(f"{total:.2f}")
 
     def load_existing_item(self):
@@ -178,7 +222,8 @@ class ItemizedBillingDialog(QDialog):
         conn = sqlite3.connect("vet_management.db")
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT description, quantity, unit_price FROM invoice_items WHERE item_id = ?
+            SELECT description, quantity, unit_price, vat_pct, vat_amount, discount_pct, 
+            discount_amount, total_price FROM invoice_items WHERE item_id = ?
         ''', (self.item_id,))
         item = cursor.fetchone()
         conn.close()
@@ -187,6 +232,10 @@ class ItemizedBillingDialog(QDialog):
             self.description_input.setText(item[0])
             self.quantity_input.setValue(item[1])
             self.unit_price_input.setValue(item[2])
+            self.vat_pct_input.setValue(item[3])
+            self.vat_amount_label.setText(f"{item[4]:.2f}")
+            self.discount_pct_input.setValue(item[5])
+            self.discount_amount_label.setText(f"{item[6]:.2f}")
             self.calculate_total()
 
     def save_item(self):
@@ -197,7 +246,11 @@ class ItemizedBillingDialog(QDialog):
 
         quantity = self.quantity_input.value()
         unit_price = self.unit_price_input.value()
-        total_price = quantity * unit_price
+        vat_pct = self.vat_pct_input.value() / 100.0
+        vat_amount = (self.vat_pct_input.value() / 100.0) * (quantity * unit_price)
+        discount_pct = self.discount_pct_input.value() / 100.0
+        discount_amount = (self.discount_pct_input.value() / 100.0) * (quantity * unit_price)
+        total_price = (quantity * unit_price) + vat_amount - discount_amount
 
         try:
             print("Invoice ID when saving item:", self.invoice_id)  # Debug
@@ -206,14 +259,18 @@ class ItemizedBillingDialog(QDialog):
 
             if self.item_id:
                 cursor.execute('''
-                    UPDATE invoice_items SET description = ?, quantity = ?, unit_price = ?, total_price = ?
+                    UPDATE invoice_items SET description = ?, quantity = ?, unit_price = ?, vat_pct = ?, vat_amount = ?, 
+                    discount_pct = ?, discount_amount = ?, total_price = ?
                     WHERE item_id = ?
-                ''', (description, quantity, unit_price, total_price, self.item_id))
+                ''', (description, quantity, unit_price, vat_pct, vat_amount, discount_pct, discount_amount,
+                      total_price, self.item_id))
             else:
                 cursor.execute('''
-                    INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, total_price)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (self.invoice_id, description, quantity, unit_price, total_price))
+                    INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, vat_pct, vat_amount, 
+                    discount_pct,  discount_amount, total_price)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (self.invoice_id, description, quantity, unit_price, vat_pct, vat_amount,
+                      discount_pct, discount_amount, total_price))
 
             conn.commit()
             conn.close()
@@ -222,7 +279,48 @@ class ItemizedBillingDialog(QDialog):
             QMessageBox.critical(self, "Error", f"Failed to save item: {e}")
 
 
+class InvoiceReminderDialog(QDialog):
+    """Ask the user when & why to remind about this invoice."""
+    def __init__(self, invoice_id, parent=None):
+        super().__init__(parent)
+        self.invoice_id = invoice_id
+        self.setWindowTitle(f"Set Payment Reminder for Invoice #{invoice_id}")
+
+        layout = QVBoxLayout()
+        form = QFormLayout()
+
+        # default to 24h from now
+        dt = QDateTime.currentDateTime().addDays(1)
+        self.dt_picker = QDateTimeEdit(dt)
+        self.dt_picker.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self.dt_picker.setCalendarPopup(True)
+        form.addRow("Reminder Time:", self.dt_picker)
+
+        self.reason_input = QLineEdit(f"Invoice #{invoice_id} payment due")
+        form.addRow("Reason:", self.reason_input)
+
+        layout.addLayout(form)
+
+        btns = QHBoxLayout()
+        ok     = QPushButton("Save")
+        cancel = QPushButton("Cancel")
+        ok.clicked.connect(self.accept)
+        cancel.clicked.connect(self.reject)
+        btns.addWidget(ok)
+        btns.addWidget(cancel)
+
+        layout.addLayout(btns)
+        self.setLayout(layout)
+
+    def get_values(self):
+        """Return (ISO‐string, reason)."""
+        ts = self.dt_picker.dateTime().toString("yyyy-MM-dd HH:mm:ss")
+        return ts, self.reason_input.text().strip()
+
+
+
 class BillingInvoicingScreen(QWidget):
+    invoiceSelected = Signal(int)  # emits invoice_id
     def __init__(self):
         super().__init__()
 
@@ -245,7 +343,28 @@ class BillingInvoicingScreen(QWidget):
         self.status_filter.currentIndexChanged.connect(self.apply_filters)
         filter_layout.addWidget(self.status_filter)
 
+        # ─── date‐range filter ──────────────────────────────────────────────────────
+        self.start_date = QDateEdit(QDate.currentDate().addMonths(-1))
+        self.start_date.setCalendarPopup(True)
+        self.start_date.setDisplayFormat("yyyy-MM-dd")
+        self.start_date.dateChanged.connect(self.apply_filters)
+
+        self.end_date = QDateEdit(QDate.currentDate())
+        self.end_date.setCalendarPopup(True)
+        self.end_date.setDisplayFormat("yyyy-MM-dd")
+        self.end_date.dateChanged.connect(self.apply_filters)
+
+        date_layout = QHBoxLayout()
+        date_layout.addWidget(QLabel("From:"))
+        date_layout.addWidget(self.start_date)
+        date_layout.addWidget(QLabel("To:"))
+        date_layout.addWidget(self.end_date)
+
+        layout.addLayout(date_layout)
+        # ───────────────────────────────────────────────────────────────────────────
+
         layout.addLayout(filter_layout)
+
 
         # Invoice Table
         self.invoice_table = QTableWidget()
@@ -276,8 +395,8 @@ class BillingInvoicingScreen(QWidget):
 
         # Itemized Billing Table
         self.item_table = QTableWidget()
-        self.item_table.setColumnCount(4)
-        self.item_table.setHorizontalHeaderLabels(["Description", "Quantity", "Unit Price", "Total Price"])
+        self.item_table.setColumnCount(6)
+        self.item_table.setHorizontalHeaderLabels(["Description", "Quantity", "Unit Price", "VAT Amount", "Discount", "Total Price"])
         self.item_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.item_table.itemSelectionChanged.connect(self.load_selected_item)
         layout.addWidget(self.item_table)
@@ -352,10 +471,12 @@ class BillingInvoicingScreen(QWidget):
 
         self.payment_status_dropdown = QComboBox()
         self.payment_status_dropdown.addItems(["Unpaid", "Paid", "Partially Paid"])
+        self.payment_status_dropdown.setEnabled(False)
         form_layout.addRow("Payment Status:", self.payment_status_dropdown)
 
         self.payment_method_dropdown = QComboBox()  # ✅ FIXED: Using the correct attribute
         self.payment_method_dropdown.addItems(["Cash", "Card", "Bank Transfer", "Other"])
+        self.payment_method_dropdown.setEnabled(False)
         form_layout.addRow("Payment Method:", self.payment_method_dropdown)
 
         layout.addLayout(form_layout)
@@ -383,15 +504,30 @@ class BillingInvoicingScreen(QWidget):
         self.add_payment_button.setEnabled(False)
         self.add_payment_button.clicked.connect(self.add_payment)
 
+        self.delete_payment_button = QPushButton("Delete Payment")
+        self.delete_payment_button.setEnabled(False)
+        self.delete_payment_button.clicked.connect(self.delete_payment)
+
+        self.send_reminder_button = QPushButton("Send Reminder")
+        self.send_reminder_button.setEnabled(False)
+        self.send_reminder_button.clicked.connect(self.send_invoice_reminder)
+
         self.delete_button = QPushButton("Delete Invoice")
         self.delete_button.setEnabled(False)
         self.delete_button.clicked.connect(self.delete_invoice)
+
+        self.print_button = QPushButton("Print Invoice")
+        self.print_button.setEnabled(False)
+        self.print_button.clicked.connect(self.print_invoice)
 
         button_layout.addWidget(self.create_button)
         button_layout.addWidget(self.edit_button)
         button_layout.addWidget(self.view_payments_button)
         button_layout.addWidget(self.add_payment_button)
+        button_layout.addWidget(self.delete_payment_button)
+        button_layout.addWidget(self.send_reminder_button)
         button_layout.addWidget(self.delete_button)
+        button_layout.addWidget(self.print_button)
 
         layout.addLayout(button_layout)
 
@@ -460,7 +596,77 @@ class BillingInvoicingScreen(QWidget):
 
         dialog = AddPaymentDialog(self.selected_invoice_id, remaining_balance)
         if dialog.exec():
-            self.load_invoices()  # Refresh invoices after payment
+            # 1) refresh the invoices grid
+            self.load_invoices()
+            # 2) re-populate the form fields (including payment_method)
+            self.load_selected_invoice()
+
+    def delete_payment(self):
+        dialog = PaymentHistoryDialog(self.selected_invoice_id)
+        # add a “Delete” button to the dialog:
+        btn = QPushButton("Delete Selected")
+        dialog.layout().addWidget(btn)
+        btn.clicked.connect(lambda: self._confirm_delete(dialog))
+        dialog.exec()
+
+    def _confirm_delete(self, history_dialog):
+        row = history_dialog.payment_table.currentRow()
+        if row < 0:
+            QMessageBox.warning(history_dialog, "No Payment", "Select one to delete.")
+            return
+        # assume payment_id is stored in hidden column 0; otherwise fetch via date+amount
+        payment_date = history_dialog.payment_table.item(row, 0).text()
+        amount = history_dialog.payment_table.item(row, 1).text()
+        # delete by matching invoice_id+timestamp+amount
+        conn = sqlite3.connect("vet_management.db")
+        cur = conn.cursor()
+        cur.execute("""
+           DELETE FROM payment_history
+            WHERE invoice_id=? AND payment_date=? AND amount_paid=?
+           """,
+                    (self.selected_invoice_id, payment_date, amount))
+        conn.commit()
+        conn.close()
+
+        history_dialog.load_payment_history()
+
+        # ← NEW: recalc & persist your invoice status/balance
+        final = float(self.final_amount_label.text() or 0)
+        self.update_payment_status_and_balance(self.selected_invoice_id, final)
+
+        # refresh balances
+        self.load_invoices()
+        self.load_selected_invoice()
+
+    def send_invoice_reminder(self):
+        """Open a dialog to pick date+reason, then insert into reminders."""
+        if not self.selected_invoice_id:
+            QMessageBox.warning(self, "No Invoice Selected", "Please select an invoice first.")
+            return
+
+        dlg = InvoiceReminderDialog(self.selected_invoice_id, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        rem_time, reason = dlg.get_values()
+        appt_id = int(self.appointment_id_input.text())
+
+        try:
+            conn = sqlite3.connect("vet_management.db")
+            cur  = conn.cursor()
+            cur.execute("""
+                INSERT INTO reminders (appointment_id, reminder_time, reminder_status, reminder_reason)
+                VALUES (?, ?, 'Pending', ?)
+            """, (appt_id, rem_time, reason))
+            conn.commit()
+        finally:
+            conn.close()
+
+        QMessageBox.information(
+            self, "Reminder Scheduled",
+            f"Payment reminder set for {rem_time}.\nReason: {reason}"
+        )
+
 
     def load_invoices(self):
         """Load all invoices into the table with appointment-specific data."""
@@ -484,9 +690,11 @@ class BillingInvoicingScreen(QWidget):
             QMessageBox.critical(self, "Database Error", f"An unexpected error occurred: {str(e)}")
 
     def apply_filters(self):
-        """Filter and display invoices based on search text and status."""
+        """Filter and display invoices based on search text, status, AND date‐range."""
         search_text = self.search_input.text().lower()
         status_filter = self.status_filter.currentText()
+        start_date = self.start_date.date()
+        end_date = self.end_date.date()
 
         filtered_invoices = []
         total_amount = 0
@@ -494,8 +702,11 @@ class BillingInvoicingScreen(QWidget):
         payment_count = 0
 
         for invoice in self.invoices:
-            invoice_id, appointment_id, patient_name, total_amt, final_amt, status, _, balance, _, appointment_date = invoice
-            if search_text and search_text not in str(invoice_id).lower() and search_text not in patient_name.lower():
+            invoice_id, appointment_id, patient_name, total_amt, final_amt, status,_, balance, created_at, appointment_date = invoice
+            created_day = QDate.fromString(created_at.split(" ")[0], "yyyy-MM-dd")
+            if created_day < start_date or created_day > end_date:
+                continue
+            if search_text and search_text not in str(appointment_id).lower() and search_text not in patient_name.lower():
                 continue
             if status_filter == "Open" and status == "Paid":
                 continue
@@ -514,7 +725,16 @@ class BillingInvoicingScreen(QWidget):
             self.invoice_table.insertRow(row_index)
 
             for col_index, col_data in enumerate(row_data):
-                item = QTableWidgetItem(str(col_data))
+                # if this is a money column (Total Amount, Final Amount, Remaining Balance)
+                if col_index in (3, 4, 7):
+                    try:
+                        # format to exactly two decimals
+                        display = f"{float(col_data):.2f}"
+                    except (ValueError, TypeError):
+                        display = str(col_data)
+                else:
+                    display = str(col_data)
+                item = QTableWidgetItem(display)
 
                 # Apply color-coding to the "Payment Status" column (index 5)
                 if col_index == 5:
@@ -595,18 +815,23 @@ class BillingInvoicingScreen(QWidget):
         self.delete_button.setEnabled(True)
         self.view_payments_button.setEnabled(True)
         self.add_payment_button.setEnabled(True)
+        self.delete_payment_button.setEnabled(True)
+        self.send_reminder_button.setEnabled(True)
         self.add_item_button.setEnabled(True)
+        self.print_button.setEnabled(True)
 
         # 7) now reload item rows (which will recalc totals if you call calculate_final_amount())
         self.load_invoice_items()
 
+        # if you have a pointer to your notifications screen:
+        self.invoiceSelected.emit(self.selected_invoice_id)
 
     def load_invoice_items(self):
         """Load itemized billing for selected invoice and update total amount."""
         conn = sqlite3.connect("vet_management.db")
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT description, quantity, unit_price, total_price FROM invoice_items WHERE invoice_id = ?
+            SELECT description, quantity, unit_price, vat_amount, discount_amount, total_price FROM invoice_items WHERE invoice_id = ?
         ''', (self.selected_invoice_id,))
         items = cursor.fetchall()
         conn.close()
@@ -744,7 +969,7 @@ class BillingInvoicingScreen(QWidget):
                 VALUES (?, 0, 0, 0, 0, 'Unpaid', ?)
             ''', (appointment_id, self.payment_method_dropdown.currentText()))
 
-            # Get and store the new invoice ID
+            # …after you insert the draft invoice and get its ID…
             self.selected_invoice_id = cursor.lastrowid
 
             conn.commit()
@@ -753,14 +978,19 @@ class BillingInvoicingScreen(QWidget):
             QMessageBox.information(self, "Invoice Created", "Draft invoice created. You can now add items.")
             self.add_item_button.setEnabled(True)
             self.finalize_button.setEnabled(True)
+
+            # load header fields…
             self.load_invoice_details(appointment_id)
+            # **and then immediately clear out any items/totals from the old invoice:**
+            self.load_invoice_items()
+
 
         except Exception as e:
             log_error(f"Error in create_invoice: {str(e)}")
             QMessageBox.critical(self, "Error", "Failed to create draft invoice.")
 
     def edit_invoice(self):
-        """Edit an existing invoice and update associated items."""
+        """Edit an existing invoice and update all invoice_items including VAT‐ & discount‐fractions."""
         if not self.selected_invoice_id:
             QMessageBox.warning(self, "No Invoice Selected", "Please select an invoice to edit.")
             return
@@ -771,6 +1001,7 @@ class BillingInvoicingScreen(QWidget):
             return
 
         try:
+            # 1) Recalculate totals from the UI
             total_amount, final_amount = self.calculate_totals_from_items()
             tax = self.tax_input.value()
             discount = self.discount_input.value()
@@ -780,42 +1011,98 @@ class BillingInvoicingScreen(QWidget):
             conn = sqlite3.connect("vet_management.db")
             cursor = conn.cursor()
 
-            cursor.execute('''
+            # 2) Update the invoices table
+            cursor.execute(
+                """
                 UPDATE invoices
-                SET appointment_id = ?, total_amount = ?, tax = ?, discount = ?, final_amount = ?, 
-                    payment_status = ?, payment_method = ?
-                WHERE invoice_id = ?
-            ''', (appointment_id, total_amount, tax, discount, final_amount,
-                  payment_status, payment_method, self.selected_invoice_id))
+                   SET appointment_id = ?, total_amount = ?, tax = ?, discount = ?,
+                       final_amount = ?, payment_status = ?, payment_method = ?
+                 WHERE invoice_id = ?
+                """,
+                (
+                    appointment_id, total_amount, tax, discount,
+                    final_amount, payment_status, payment_method,
+                    self.selected_invoice_id
+                )
+            )
 
-            cursor.execute("DELETE FROM invoice_items WHERE invoice_id = ?", (self.selected_invoice_id,))
+            # 3) Wipe out old items
+            cursor.execute(
+                "DELETE FROM invoice_items WHERE invoice_id = ?",
+                (self.selected_invoice_id,)
+            )
 
+            # 4) Re‐insert each row, this time including vat_pct, discount_pct & vat_flag
             for row in range(self.item_table.rowCount()):
-                description = self.item_table.item(row, 0).text().strip()
-                quantity = int(self.item_table.item(row, 1).text())
+                desc = self.item_table.item(row, 0).text().strip()
+                qty = int(self.item_table.item(row, 1).text())
                 unit_price = float(self.item_table.item(row, 2).text())
-                total = float(self.item_table.item(row, 3).text())
+                vat_amount = float(self.item_table.item(row, 3).text())
+                discount_amount = float(self.item_table.item(row, 4).text())
+                total_price = float(self.item_table.item(row, 5).text())
 
-                cursor.execute('''
-                    INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, total_price)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (self.selected_invoice_id, description, quantity, unit_price, total))
+                # recompute fractions
+                base = qty * unit_price if qty and unit_price else 1
+                vat_frac = vat_amount / base
+                discount_frac = discount_amount / base
+
+                # integer % for storage
+                vat_pct = vat_frac * 100
+                disc_pct = discount_frac * 100
+
+                # default flags if missing
+                rate = int(round(vat_pct))
+                if rate not in (5, 19):
+                    # fall back: small-amount => 5%, large => 19%
+                    rate = 5 if vat_amount < 1 else 19
+                flag = "B" if rate == 5 else "C" if rate == 19 else ""
+
+                cursor.execute(
+                    """
+                    INSERT INTO invoice_items
+                      (invoice_id,
+                       description,
+                       quantity,
+                       unit_price,
+                       vat_pct,
+                       vat_amount,
+                       discount_pct,
+                       discount_amount,
+                       total_price,
+                       vat_flag)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        self.selected_invoice_id,
+                        desc,
+                        qty,
+                        unit_price,
+                        vat_frac,  # store as fraction 0.19 or 0.05
+                        vat_amount,
+                        discount_frac,  # store as fraction, too
+                        discount_amount,
+                        total_price,
+                        flag
+                    )
+                )
 
             conn.commit()
             conn.close()
 
+            # 5) Finally, update invoice‐level balance & status
             self.update_payment_status_and_balance(self.selected_invoice_id, final_amount)
 
             QMessageBox.information(self, "Success", "Invoice updated successfully.")
             self.finalize_button.setEnabled(False)
+
+            # 6) Refresh the UI
             self.load_invoices()
             self.clear_inputs()
             self.clear_invoice_form()
-            self.calculate_final_amount()  # ✅ Refresh balance after editing
+            self.calculate_final_amount()
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Unexpected error: {str(e)}")
-
+            QMessageBox.critical(self, "Error", f"Unexpected error: {e}")
 
     def delete_invoice(self):
         """Delete the selected invoice."""
@@ -840,6 +1127,282 @@ class BillingInvoicingScreen(QWidget):
         self.clear_inputs()
         self.clear_invoice_form()  # ✅ Clear the form after editing an invoice
 
+    # In billing_invoicing.py, inside your BillingInvoicingScreen class:
+
+    def print_invoice(self):
+        """Fetch invoice data, then offer Save-PDF or Print (with logo, header, items, VAT‐breakdown, signatures)."""
+        # 1) Ensure an invoice is selected
+        if not getattr(self, "selected_invoice_id", None):
+            QMessageBox.warning(self, "No Invoice", "Please select an invoice first.")
+            return
+        inv_id = self.selected_invoice_id
+
+        # 2) Fetch owner & pet
+        conn = sqlite3.connect("vet_management.db")
+        cur = conn.cursor()
+        cur.execute("""
+          SELECT p.owner_name, p.owner_contact, p.name
+            FROM appointments a
+            JOIN patients   p ON a.patient_id = p.patient_id
+           WHERE a.appointment_id = ?
+        """, (int(self.appointment_id_input.text() or 0),))
+        owner_name, owner_contact, pet_name = cur.fetchone() or ("", "", "")
+        conn.close()
+
+        # 3) Fetch invoice items (with VAT & discounts)
+        conn = sqlite3.connect("vet_management.db")
+        cur = conn.cursor()
+        cur.execute("""
+          SELECT description, quantity, unit_price,
+                 discount_pct, discount_amount,
+                 total_price,
+                 vat_pct, vat_amount, vat_flag
+            FROM invoice_items
+           WHERE invoice_id = ?
+        """, (inv_id,))
+        raw_items = cur.fetchall()
+        conn.close()
+
+        items = [
+            {
+                "desc": desc, "qty": qty,
+                "unit": unit, "disc_amt": d_amt,
+                "total": total, "vat_amt": vat_amt
+            }
+            for desc, qty, unit, _, d_amt, total, _, vat_amt, _ in raw_items
+        ]
+
+        # 4) Build VAT breakdown by rate
+        grouping = {}
+        for desc, qty, unit, d_pct, d_amt, total, v_pct, v_amt, v_flag in raw_items:
+            net = total - v_amt
+            grp = grouping.setdefault(v_pct, {"net": 0.0, "vat_amount": 0.0, "flag": v_flag})
+            grp["net"] += net
+            grp["vat_amount"] += v_amt
+
+        vat_breakdown = [
+            {"vat_pct": rate, "net": data["net"], "vat_amount": data["vat_amount"], "flag": data["flag"]}
+            for rate, data in grouping.items()
+        ]
+
+        # *** HERE: define total_vat ***
+        total_vat = sum(b["vat_amount"] for b in vat_breakdown)
+
+        # 5) Fetch invoice‐level discount & final total
+        conn = sqlite3.connect("vet_management.db")
+        cur = conn.cursor()
+        cur.execute("SELECT discount, final_amount FROM invoices WHERE invoice_id = ?", (inv_id,))
+        disc_pct, final_total = cur.fetchone() or (0.0, sum(it["total"] for it in items))
+        conn.close()
+        subtotal = sum(it["total"] for it in items)
+
+        # 6) Ask user Save-PDF or Print
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Invoice Output")
+        msg.setText("Save as PDF or send directly to printer?")
+        pdf_btn = msg.addButton("Save as PDF", QMessageBox.AcceptRole)
+        print_btn = msg.addButton("Print to Printer", QMessageBox.AcceptRole)
+        cancel_btn = msg.addButton("Cancel", QMessageBox.RejectRole)
+        msg.exec()
+        clicked = msg.clickedButton()
+
+        # — PDF branch (unchanged) —
+        if clicked == pdf_btn:
+            default_fn = f"Invoice_{inv_id}_{owner_name.replace(' ', '')}_{datetime.now():%Y%m%d}.pdf"
+            path, _ = QFileDialog.getSaveFileName(self, "Save Invoice as PDF", default_fn, "PDF Files (*.pdf)")
+            if path:
+                try:
+                    self.generate_pdf(
+                        path=path,
+                        inv_id=inv_id,
+                        created_date=datetime.now().strftime("%d-%b-%Y"),
+                        created_time=datetime.now().strftime("%H:%M"),
+                        customer=owner_name,
+                        pet_name=pet_name,
+                        items=items,
+                        subtotal=subtotal,
+                        discount_pct=disc_pct,
+                        discount_amount=subtotal * (disc_pct / 100.0),
+                        final_total=final_total,
+                        vat_breakdown=vat_breakdown
+                    )
+                    QMessageBox.information(self, "Saved", f"Invoice saved to:\n{path}")
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Could not create PDF:\n{e}")
+            return
+
+        # — Print branch —
+        if clicked is print_btn:
+            # 1) Create a temp PDF at 80 mm width
+            tmp_path = os.path.join(
+                tempfile.gettempdir(),
+                f"Invoice_{inv_id}_{owner_name.replace(' ', '')}.pdf"
+            )
+            self.generate_pdf(
+                path=tmp_path,
+                inv_id=inv_id,
+                created_date=datetime.now().strftime("%d-%b-%Y"),
+                created_time=datetime.now().strftime("%H:%M"),
+                customer=owner_name,
+                pet_name=pet_name,
+                items=items,
+                subtotal=subtotal,
+                discount_pct=disc_pct,
+                discount_amount=subtotal * (disc_pct / 100.0),
+                final_total=final_total,
+                vat_breakdown=vat_breakdown
+            )
+
+            # 2) Find your thermal printer
+            thermal_name = None
+            for pi in QPrinterInfo.availablePrinters():
+                n = pi.printerName().lower()
+                if "thermal" in n or "epson" in n:
+                    thermal_name = pi.printerName()
+                    break
+
+            if not thermal_name:
+                QMessageBox.warning(
+                    self, "Printer Not Found",
+                    "Could not find your thermal printer. "
+                    "Make sure its driver is installed and its name contains “Thermal” or “Epson”."
+                )
+                return
+
+            # 3) Temporarily switch default → print → restore
+            original = win32print.GetDefaultPrinter()
+            try:
+                win32print.SetDefaultPrinter(thermal_name)
+                os.startfile(tmp_path, "print")
+            finally:
+                win32print.SetDefaultPrinter(original)
+
+    def generate_pdf(self,
+                     path,
+                     inv_id, created_date, created_time,
+                     customer, pet_name, items,
+                     subtotal, discount_pct, discount_amount,
+                     final_total, vat_breakdown
+                     ):
+        """
+        Build an 80 mm thermal-receipt PDF, auto-trimmed height,
+        Courier font, full items + VAT breakdown + signatures.
+        """
+        width, margin = 80*mm, 5*mm
+        cw = width - 2*margin
+
+        styles = getSampleStyleSheet()
+        styles["Normal"].fontName = "Courier"; styles["Normal"].fontSize = 6
+        styles["Title"].fontName  = "Courier-Bold"; styles["Title"].fontSize  = 9
+
+        elems = []
+
+        # Logo (optional)
+        logo_fp = os.path.join(os.path.dirname(__file__), "pet_wellness_logo.png")
+        if os.path.exists(logo_fp):
+            img = Image(logo_fp, width=cw*0.6, height=cw*0.3)
+            img.hAlign="CENTER"; elems.append(img); elems.append(Spacer(1,3*mm))
+
+        # Clinic header
+        elems.append(Paragraph("PET WELLNESS VETS", styles["Title"]))
+        elems.append(Paragraph("Kyriakou Adamou no.2, Shop 2&3, 8220", styles["Normal"]))
+        elems.append(Paragraph("Tel: 99941186   Email: contact@petwellnessvets.com", styles["Normal"]))
+        elems.append(Spacer(1,5*mm))
+
+        # Invoice meta
+        meta = [
+          ["Inv#:", str(inv_id), "Date:", created_date],
+          ["Time:", created_time, "Customer:", customer],
+          ["Pet:", pet_name, "", ""]
+        ]
+        colw = [cw*0.2, cw*0.3, cw*0.2, cw*0.3]
+        tbl = Table(meta, colWidths=colw)
+        tbl.setStyle(TableStyle([
+          ("FONTSIZE",(0,0),(-1,-1),7),
+          ("BOTTOMPADDING",(0,0),(-1,-1),2),
+        ]))
+        elems.append(tbl); elems.append(Spacer(1,3*mm))
+
+        # Items + per-row VAT
+        data = [["Desc","Qty","Unit","Disc","Total","VAT"]]
+        for it in items:
+            data.append([
+              it["desc"],
+              str(it["qty"]),
+              f"{it['unit']:.2f}",
+              f"{it['disc_amt']:.2f}",
+              f"{it['total']:.2f}",
+              f"{it['vat_amt']:.2f}"
+            ])
+        colw = [cw*0.40, cw*0.1, cw*0.15, cw*0.1, cw*0.15, cw*0.1]
+        itbl = Table(data, colWidths=colw)
+        itbl.setStyle(TableStyle([
+          ("BACKGROUND",(0,0),(-1,0),colors.lightgrey),
+          ("GRID",(0,0),(-1,-1),0.3,colors.black),
+          ("FONTSIZE",(0,0),(-1,-1),7),
+          ("ALIGN",(1,1),(-1,-1),"RIGHT"),
+        ]))
+        elems.append(itbl); elems.append(Spacer(1,3*mm))
+
+        # Summary
+        summary = [
+          ["Subtotal:",            f"€{subtotal:.2f}"],
+          [f"Discount ({discount_pct:.0f}%):", f"–€{discount_amount:.2f}"],
+          ["Total:",               f"€{final_total:.2f}"]
+        ]
+        colw = [cw*0.7, cw*0.3]
+        stbl = Table(summary, colWidths=colw, hAlign="RIGHT")
+        stbl.setStyle(TableStyle([
+          ("FONTSIZE",(0,0),(-1,-1),7),
+          ("ALIGN",(1,0),(-1,-1),"RIGHT"),
+          ("BOTTOMPADDING",(0,0),(-1,-1),2),
+        ]))
+        elems.append(stbl); elems.append(Spacer(1,3*mm))
+
+        # VAT breakdown by rate
+        vat_data = [["Net", "VAT%", "VAT", "Flag"]]
+        for row in vat_breakdown:
+            vat_data.append([
+                f"{row['net']:.2f}",
+                f"{row['vat_pct']}%",
+                f"{row['vat_amount']:.2f}",
+                row["flag"]
+            ])
+        total_vat = sum(r["vat_amount"] for r in vat_breakdown)
+        vat_data.append(["", "", "Total VAT", f"€{total_vat:.2f}"])
+
+        colw = [cw * 0.4, cw * 0.2, cw * 0.2, cw * 0.2]
+        vtbl = Table(vat_data, colWidths=colw)
+        vtbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+            ("GRID", (0, 0), (-1, -1), 0.3, colors.black),
+            ("FONTSIZE", (0, 0), (-1, -1), 7),
+            ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+        ]))
+        elems.append(vtbl)
+        elems.append(Spacer(1, 5 * mm))
+
+        # Signatures
+        sig = [["Doctor:","Issued By:","Received By:"],["____","____","____"]]
+        s_tbl = Table(sig, colWidths=[cw/3]*3)
+        s_tbl.setStyle(TableStyle([
+          ("FONTSIZE",(0,0),(-1,-1),7),
+          ("BOTTOMPADDING",(0,0),(2,0),4),
+        ]))
+        elems.append(s_tbl)
+
+        # Auto-trim height
+        total_h = margin*2
+        for f in elems:
+            _, h = f.wrap(cw, A4[1]); total_h += h
+
+        doc = SimpleDocTemplate(path,
+            pagesize=(width, total_h),
+            leftMargin=margin, rightMargin=margin,
+            topMargin=margin, bottomMargin=margin)
+        doc.build(elems)
+
+
     def clear_invoice_form(self):
         """Clear all input fields and reset the form."""
         self.appointment_id_input.clear()
@@ -861,6 +1424,7 @@ class BillingInvoicingScreen(QWidget):
         self.delete_button.setEnabled(False)
         self.view_payments_button.setEnabled(False)
         self.add_payment_button.setEnabled(False)
+        self.print_button.setEnabled(False)
 
     def load_invoice_details(self, appointment_id):
         """Load appointment details into the invoice form."""
@@ -887,7 +1451,7 @@ class BillingInvoicingScreen(QWidget):
         item_total = 0.0
         for row in range(self.item_table.rowCount()):
             try:
-                total_price = float(self.item_table.item(row, 3).text())
+                total_price = float(self.item_table.item(row, 5).text())
                 item_total += total_price
             except (ValueError, AttributeError):
                 continue
@@ -949,6 +1513,8 @@ class BillingInvoicingScreen(QWidget):
             QMessageBox.information(self, "Export Successful", f"Invoices exported to {file_path}.")
         except Exception as e:
             QMessageBox.critical(self, "Export Failed", f"An error occurred while exporting: {str(e)}")
+
+
 
     def clear_inputs(self):
         """Clear all input fields."""
