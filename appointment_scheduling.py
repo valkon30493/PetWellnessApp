@@ -6,37 +6,49 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, Q
                                , QDateEdit, QLabel, QFileDialog, QCalendarWidget, QTimeEdit, QDialog, QDateTimeEdit,
                                QHeaderView)
 from PySide6.QtCore import Qt, QDate, QStringListModel, QTime, Signal, QTimer
-from PySide6.QtGui import QColor  # Import QColor for color specifications
+from PySide6.QtGui import QColor, QTextCharFormat, QBrush
 from notifications import send_email
 from logger import log_error  # Import the log_error function
 
 class MultiSelectCalendar(QCalendarWidget):
     def __init__(self):
         super().__init__()
-        self.selected_dates = set()  # Use a set to store selected dates
+        self.selected_dates = set()
 
-        # Connect the clicked signal to toggle date selection
+        # 1. Month/Year label
+        self.header = QLabel()
+        self.header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.update_header(self.yearShown(), self.monthShown())
+        self.currentPageChanged.connect(self.update_header)
+
+        # 2. Grid & week numbers
+        self.setGridVisible(True)
+        self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.ISOWeekNumbers)
+        # 3. Disable past
+        self.setMinimumDate(QDate.currentDate())
+
+        # Highlight format
+        self._fmt = QTextCharFormat()
+        self._fmt.setBackground(QBrush(QColor("#cfe2f3")))
+
+        # hook clicks
         self.clicked.connect(self.toggle_date)
 
-    def toggle_date(self, date):
-        """Toggle selection of a date."""
-        if date in self.selected_dates:
-            self.selected_dates.remove(date)  # Deselect the date
-        else:
-            self.selected_dates.add(date)  # Select the date
+    def update_header(self, year: int, month: int):
+        # Update the month/year label
+        d = QDate(year, month, 1)
+        self.header.setText(d.toString("MMMM yyyy"))
 
-        self.update()  # Update the UI to show selected dates
+    def toggle_date(self, date: QDate):
+        if date in self.selected_dates:
+            self.selected_dates.remove(date)
+            self.setDateTextFormat(date, QTextCharFormat())
+        else:
+            self.selected_dates.add(date)
+            self.setDateTextFormat(date, self._fmt)
 
     def get_selected_dates(self):
-        """Return the selected dates as a sorted list."""
         return sorted(self.selected_dates)
-
-    def paintCell(self, painter, rect, date):
-        """Override to visually highlight selected dates."""
-        super().paintCell(painter, rect, date)
-        if date in self.selected_dates:
-            painter.setBrush(QColor("blue"))  # Use QColor with a color name or hex code
-            painter.drawRect(rect)
 
 class AppointmentSchedulingScreen(QWidget):
     # Signal to notify patient list updates
@@ -85,6 +97,8 @@ class AppointmentSchedulingScreen(QWidget):
         # Form layout for appointment details
         form_layout = QFormLayout()
 
+
+
         # Existing patient input
         self.patient_input = QLineEdit()
         self.patient_input.setPlaceholderText("Search for a patient...")
@@ -94,14 +108,21 @@ class AppointmentSchedulingScreen(QWidget):
         self.patient_input.textChanged.connect(self.filter_patients)
         form_layout.addRow("Patient:", self.patient_input)
 
-        # Multi-select calendar for choosing dates
+        # set up the “multi_calendar” attribute before you ever use it
         self.multi_calendar = MultiSelectCalendar()
+        form_layout.addRow("", self.multi_calendar.header)
         form_layout.addRow("Select Dates:", self.multi_calendar)
 
         # Time picker for selecting appointment time
         self.time_picker = QTimeEdit()
         self.time_picker.setTime(QTime.currentTime())  # Default to the current time
         form_layout.addRow("Time:", self.time_picker)
+
+        # Duration dropdown
+        self.duration_dropdown = QComboBox()
+        self.duration_dropdown.addItems(["15", "30", "45", "60"])
+        self.duration_dropdown.setCurrentText("30")
+        form_layout.addRow("Duration (min):", self.duration_dropdown)
 
         # Appointment type dropdown
         self.type_dropdown = QComboBox()
@@ -208,7 +229,7 @@ class AppointmentSchedulingScreen(QWidget):
         self.appointment_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.appointment_table.setColumnCount(8)
         self.appointment_table.setHorizontalHeaderLabels([
-            "ID", "Patient", "Date & Time", "Type", "Reason", "Veterinarian", "Status", "Notification Status"
+            "ID", "Patient", "Date & Time (Dur)", "Type", "Reason", "Veterinarian", "Status", "Notification Status"
         ])
         self.appointment_table.itemSelectionChanged.connect(self.load_selected_appointment)
         self.appointment_table.setSortingEnabled(True)
@@ -222,55 +243,63 @@ class AppointmentSchedulingScreen(QWidget):
         # Load all patient names for the completer
         self.all_patients = []  # Store all patients for filtering
         self.load_patients()
+        self.load_appointments()
 
     def search_appointments(self):
-        """Search appointments by Patient Name or Appointment ID."""
+        """Search appointments by Patient Name or Appointment ID (including duration)."""
         patient_name = self.search_patient_name_input.text().strip()
         appointment_id = self.search_appointment_id_input.text().strip()
 
-        # Base query
-        query = '''
-            SELECT 
-                a.appointment_id, 
-                p.name AS patient_name, 
+        # Base query pulling duration + notification status
+        query = """
+            SELECT
+                a.appointment_id,
+                p.name,
                 a.date_time,
+                a.duration_minutes,
                 a.appointment_type,
-                a.reason, 
-                a.veterinarian, 
+                a.reason,
+                a.veterinarian,
                 a.status,
                 a.notification_status
             FROM appointments a
             JOIN patients p ON a.patient_id = p.patient_id
             WHERE 1=1
-        '''
+        """
         params = []
-
-        # Add filters
         if patient_name:
             query += " AND p.name LIKE ?"
             params.append(f"%{patient_name}%")
-
         if appointment_id:
             query += " AND a.appointment_id = ?"
             params.append(appointment_id)
 
-        # Fetch filtered results
-        conn = sqlite3.connect("vet_management.db")
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        results = cursor.fetchall()
-        conn.close()
+        try:
+            conn = sqlite3.connect("vet_management.db")
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            conn.close()
 
-        # Populate the table with the search results
-        self.appointment_table.setRowCount(0)
-        for row_index, row_data in enumerate(results):
-            self.appointment_table.insertRow(row_index)
-            for col_index, col_data in enumerate(row_data):
-                self.appointment_table.setItem(row_index, col_index, QTableWidgetItem(str(col_data)))
+            # Clear & refill table
+            self.appointment_table.setRowCount(0)
+            for r, row in enumerate(rows):
+                appt_id, patient, dt, dur, typ, reason, vet, status, notif = row
+                self.appointment_table.insertRow(r)
+                # ID
+                self.appointment_table.setItem(r, 0, QTableWidgetItem(str(appt_id)))
+                # Patient
+                self.appointment_table.setItem(r, 1, QTableWidgetItem(patient))
+                # Date & Time (Dur)
+                self.appointment_table.setItem(r, 2, QTableWidgetItem(f"{dt} ({dur} min)"))
+                # Type, Reason, Vet, Status, Notification
+                for c, val in enumerate((typ, reason, vet, status, notif), start=3):
+                    self.appointment_table.setItem(r, c, QTableWidgetItem(str(val)))
 
-        # Show notification if no results
-        if not results:
-            QMessageBox.information(self, "No Results", "No appointments found matching the search criteria.")
+            if not rows:
+                QMessageBox.information(self, "No Results", "No appointments found matching the search criteria.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred while searching:\n{e}")
 
     def reload_patients(self):
         """Reload the patient list into the completer."""
@@ -320,6 +349,7 @@ class AppointmentSchedulingScreen(QWidget):
             vet = self.vet_dropdown.currentText()
             status = self.status_dropdown.currentText()
             selected_time = self.time_picker.time().toString("HH:mm")
+            duration = int(self.duration_dropdown.currentText())  # ← new
 
             if not selected_dates:
                 QMessageBox.warning(self, "Input Error", "Please select at least one date.")
@@ -329,81 +359,146 @@ class AppointmentSchedulingScreen(QWidget):
                 QMessageBox.warning(self, "Input Error", "Please fill out all required fields.")
                 return
 
+
+
             conn = sqlite3.connect('vet_management.db')
             cursor = conn.cursor()
+            count = 0
 
             for date in selected_dates:
-                # Combine selected date with the chosen time
-                date_time = f"{date.toString('yyyy-MM-dd')} {selected_time}"
+                # 1) build start/end strings
+                dt_start_str = f"{date.toString('yyyy-MM-dd')} {selected_time}"
+                dt_start = datetime.strptime(dt_start_str, "%Y-%m-%d %H:%M")
+                dt_end = dt_start + timedelta(minutes=duration)
+                dt_end_str = dt_end.strftime("%Y-%m-%d %H:%M")
+
+                # 2) conflict check
+                cursor.execute("""
+                                SELECT COUNT(*) 
+                                  FROM appointments
+                                 WHERE veterinarian = ?
+                                   AND datetime(date_time, '+' || duration_minutes || ' minutes') > ?
+                                   AND date_time < ?
+                            """, (vet, dt_start_str, dt_end_str))
+                (conflicts,) = cursor.fetchone()
+                if conflicts:
+                    QMessageBox.warning(
+                        self,
+                        "Scheduling Conflict",
+                        f"{vet} already booked overlapping {dt_start_str}–{dt_end_str}"
+                    )
+                    continue
+
+                # 3) if no conflict, insert
                 cursor.execute('''
-                    INSERT INTO appointments (patient_id, date_time, appointment_type, reason, veterinarian, status, notification_status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (patient_id, date_time, appointment_type, reason, vet, status, 'Not Sent'))
+                                INSERT INTO appointments
+                                  (patient_id, date_time, duration_minutes,
+                                   appointment_type, reason, veterinarian, status, notification_status)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, 'Not Sent')
+                            ''', (patient_id, dt_start_str, duration,
+                                  appointment_type, reason, vet, status))
+                count += 1
 
             conn.commit()
             conn.close()
 
-            QMessageBox.information(self, "Success", f"{len(selected_dates)} appointment(s) scheduled successfully.")
+            QMessageBox.information(self, "Success", f"Scheduled {count} new appointment(s).")
             self.load_appointments()
             self.clear_inputs()
 
         except Exception as e:
-            log_error(f"Error in create_appointment: {str(e)}")  # Log any errors
-            QMessageBox.critical(self, "Error", "Failed to create appointment.")
+            log_error(f"Error scheduling appointment: {e}")
+            QMessageBox.critical(self, "Error", "Failed to schedule appointment.")
 
     def edit_appointment(self):
-        """Edit selected appointment data in the database."""
+        """Edit selected appointment data in the database, with conflict detection."""
         if not self.selected_appointment_id:
             QMessageBox.warning(self, "No Appointment Selected", "Please select an appointment to edit.")
             return
 
-        # Validate the patient input
+        # ── Validate patient selection ─────────────────────────────────────────
         patient_text = self.patient_input.text().strip()
-        if not patient_text or "(" not in patient_text or ")" not in patient_text:
+        if "(" not in patient_text or ")" not in patient_text:
             QMessageBox.warning(self, "Input Error", "Please select a valid patient.")
             return
+        patient_id = int(patient_text.split("(ID: ")[1].rstrip(")"))
 
-        # Extract patient_id from input
-        patient_id = int(patient_text.split("(ID: ")[1][:-1])
-
-        # Get updated data from input fields
-        selected_dates = self.multi_calendar.get_selected_dates()
-        if len(selected_dates) != 1:
+        # ── Exactly one date for editing ──────────────────────────────────────
+        dates = self.multi_calendar.get_selected_dates()
+        if len(dates) != 1:
             QMessageBox.warning(self, "Input Error", "Please select exactly one date for editing.")
             return
 
-        selected_time = self.time_picker.time().toString("HH:mm")
-        date_time = f"{selected_dates[0].toString('yyyy-MM-dd')} {selected_time}"
-        appointment_type = self.type_dropdown.currentText()
+        # ── Gather updated fields ─────────────────────────────────────────────
+        sel_date = dates[0]
+        sel_time = self.time_picker.time().toString("HH:mm")
+        date_time = f"{sel_date.toString('yyyy-MM-dd')} {sel_time}"
+        duration = int(self.duration_dropdown.currentText())
+        appt_type = self.type_dropdown.currentText()
         reason = self.reason_input.text().strip()
         vet = self.vet_dropdown.currentText()
         status = self.status_dropdown.currentText()
 
-        if not reason or vet == "Select Veterinarian":
+        if vet == "Select Veterinarian" or not reason:
             QMessageBox.warning(self, "Input Error", "Please fill out all required fields.")
             return
 
-        # Reset notification_status if date or time is changed
-        conn = sqlite3.connect('vet_management.db')
+        # ── Compute new appointment end time ─────────────────────────────────
+        dt_start = datetime.strptime(date_time, "%Y-%m-%d %H:%M")
+        dt_end = dt_start + timedelta(minutes=duration)
+        dt_start_str = dt_start.strftime("%Y-%m-%d %H:%M")
+        dt_end_str = dt_end.strftime("%Y-%m-%d %H:%M")
+
+        conn = sqlite3.connect("vet_management.db")
         cursor = conn.cursor()
 
-        cursor.execute('SELECT date_time FROM appointments WHERE appointment_id = ?', (self.selected_appointment_id,))
-        original_date_time = cursor.fetchone()
+        # ── Conflict check (exclude the current appointment) ─────────────────
+        cursor.execute("""
+            SELECT COUNT(*) 
+              FROM appointments
+             WHERE veterinarian = ?
+               AND appointment_id != ?
+               AND datetime(date_time, '+' || duration_minutes || ' minutes') > ?
+               AND date_time < ?
+        """, (vet, self.selected_appointment_id, dt_start_str, dt_end_str))
+        (conflicts,) = cursor.fetchone()
+        if conflicts:
+            QMessageBox.warning(
+                self,
+                "Scheduling Conflict",
+                f"{vet} already has an overlapping appointment\n"
+                f"between {dt_start_str} and {dt_end_str}."
+            )
+            conn.close()
+            return
 
-        if original_date_time and original_date_time[0] != date_time:
-            notification_status = "Not Sent"
-        else:
-            # Keep the existing notification_status
-            cursor.execute('SELECT notification_status FROM appointments WHERE appointment_id = ?',
-                           (self.selected_appointment_id,))
-            notification_status = cursor.fetchone()[0]
+        # ── Preserve or reset notification status ────────────────────────────
+        cursor.execute(
+            "SELECT notification_status, date_time FROM appointments WHERE appointment_id = ?",
+            (self.selected_appointment_id,)
+        )
+        notif_status, orig_dt = cursor.fetchone()
+        if orig_dt != date_time:
+            notif_status = "Not Sent"
 
-        # Update the appointment in the database
-        cursor.execute('''
+        # ── Perform the update ───────────────────────────────────────────────
+        cursor.execute("""
             UPDATE appointments
-            SET patient_id = ?, date_time = ?, appointment_type = ?, reason = ?, veterinarian = ?, status = ?, notification_status = ?
-            WHERE appointment_id = ?
-        ''', (patient_id, date_time, appointment_type, reason, vet, status, notification_status, self.selected_appointment_id))
+               SET patient_id         = ?,
+                   date_time          = ?,
+                   duration_minutes   = ?,
+                   appointment_type   = ?,
+                   reason             = ?,
+                   veterinarian       = ?,
+                   status             = ?,
+                   notification_status= ?
+             WHERE appointment_id = ?
+        """, (
+            patient_id, date_time, duration,
+            appt_type, reason, vet, status,
+            notif_status, self.selected_appointment_id
+        ))
+
         conn.commit()
         conn.close()
 
@@ -481,6 +576,11 @@ class AppointmentSchedulingScreen(QWidget):
             layout = QVBoxLayout()
             self.reminder_time_picker = QDateTimeEdit()
             self.reminder_time_picker.setCalendarPopup(True)
+            cal = self.reminder_time_picker.calendarWidget()
+            cal.setGridVisible(True)
+            cal.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.ISOWeekNumbers)
+            # (month/year header is already built in)
+
             layout.addWidget(QLabel("Reminder Date & Time:"))
             layout.addWidget(self.reminder_time_picker)
 
@@ -565,123 +665,155 @@ class AppointmentSchedulingScreen(QWidget):
             QMessageBox.critical(self, "Export Failed", f"An error occurred: {str(e)}")
 
     def load_appointments(self):
-        """Load all appointments into the table."""
+        """Load all appointments into the table, including duration."""
         try:
-            conn = sqlite3.connect('vet_management.db')
-            cursor = conn.cursor()
-            cursor.execute('''
+            conn = sqlite3.connect("vet_management.db")
+            cur = conn.cursor()
+            cur.execute("""
                 SELECT 
-                    a.appointment_id, 
-                    p.name AS patient_name, 
+                    a.appointment_id,
+                    p.name,
                     a.date_time,
+                    a.duration_minutes,
                     a.appointment_type,
-                    a.reason, 
-                    a.veterinarian, 
+                    a.reason,
+                    a.veterinarian,
                     a.status,
                     a.notification_status
                 FROM appointments a
                 JOIN patients p ON a.patient_id = p.patient_id
-            ''')
-            appointments = cursor.fetchall()
+            """)
+            rows = cur.fetchall()
             conn.close()
 
             self.appointment_table.setRowCount(0)
-            for row_index, row_data in enumerate(appointments):
-                self.appointment_table.insertRow(row_index)
-                for col_index, col_data in enumerate(row_data):
-                    self.appointment_table.setItem(row_index, col_index, QTableWidgetItem(str(col_data)))
+            for r, row in enumerate(rows):
+                appt_id, patient, dt, dur, typ, reason, vet, status, notif = row
+                self.appointment_table.insertRow(r)
 
-        except sqlite3.Error as e:
-            QMessageBox.critical(self, "Database Error", f"An error occurred while loading appointments:\n{str(e)}")
+                # col 0: ID
+                self.appointment_table.setItem(r, 0, QTableWidgetItem(str(appt_id)))
+                # col 1: Patient
+                self.appointment_table.setItem(r, 1, QTableWidgetItem(patient))
+                # col 2: Date & Time (Dur)
+                display = f"{dt} ({dur} min)"
+                self.appointment_table.setItem(r, 2, QTableWidgetItem(display))
+                # cols 3–7: Type, Reason, Vet, Status, Notification
+                for c, val in enumerate((typ, reason, vet, status, notif), start=3):
+                    self.appointment_table.setItem(r, c, QTableWidgetItem(str(val)))
+        except Exception as e:
+            QMessageBox.critical(self, "Database Error",
+                                 f"An error occurred while loading appointments:\n{e}")
 
     def apply_filters(self):
-        """Apply filters to the appointment table."""
-        start_date = self.start_date_filter.date().toString("yyyy-MM-dd")
-        end_date = self.end_date_filter.date().toString("yyyy-MM-dd")
+        """Apply date‐range + status filters to the appointment table (including duration)."""
+        # build your date bounds
+        start = self.start_date_filter.date().toString("yyyy-MM-dd") + " 00:00"
+        end = self.end_date_filter.date().toString("yyyy-MM-dd") + " 23:59"
         status = self.status_filter.currentText()
 
-        conn = sqlite3.connect('vet_management.db')
-        cursor = conn.cursor()
-
-        # Base query
-        query = '''
-            SELECT 
-                a.appointment_id, 
-                p.name AS patient_name, 
+        # SELECT 9 fields now
+        query = """
+            SELECT
+                a.appointment_id,
+                p.name,
                 a.date_time,
+                a.duration_minutes,
                 a.appointment_type,
-                a.reason, 
-                a.veterinarian, 
-                a.status
+                a.reason,
+                a.veterinarian,
+                a.status,
+                a.notification_status
             FROM appointments a
             JOIN patients p ON a.patient_id = p.patient_id
             WHERE a.date_time BETWEEN ? AND ?
-        '''
-        params = [f"{start_date} 00:00", f"{end_date} 23:59"]
-
-        # Add status filter if not "All"
+        """
+        params = [start, end]
         if status != "All":
             query += " AND a.status = ?"
             params.append(status)
 
-        # Execute query
-        cursor.execute(query, params)
-        appointments = cursor.fetchall()
-        conn.close()
+        try:
+            conn = sqlite3.connect("vet_management.db")
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            conn.close()
 
-        # Display filtered results in the table
-        self.appointment_table.setRowCount(0)
-        for row_index, row_data in enumerate(appointments):
-            self.appointment_table.insertRow(row_index)
-            for col_index, col_data in enumerate(row_data):
-                self.appointment_table.setItem(row_index, col_index, QTableWidgetItem(str(col_data)))
+            # clear out old data
+            self.appointment_table.setRowCount(0)
+
+            # repopulate
+            for r, row in enumerate(rows):
+                appt_id, patient, dt, dur, typ, reason, vet, stat, notif = row
+                self.appointment_table.insertRow(r)
+                # ID
+                self.appointment_table.setItem(r, 0, QTableWidgetItem(str(appt_id)))
+                # Patient
+                self.appointment_table.setItem(r, 1, QTableWidgetItem(patient))
+                # Date & Time (Dur)
+                self.appointment_table.setItem(r, 2, QTableWidgetItem(f"{dt} ({dur} min)"))
+                # Type, Reason, Vet, Status, Notification
+                for c, val in enumerate((typ, reason, vet, stat, notif), start=3):
+                    self.appointment_table.setItem(r, c, QTableWidgetItem(str(val)))
+
+            if not rows:
+                QMessageBox.information(self, "No Results", "No appointments found for those filters.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not apply filters:\n{e}")
 
     def load_selected_appointment(self):
-        """Load selected appointment details into the form for editing or canceling."""
-        selected_row = self.appointment_table.currentRow()
-        if selected_row < 0:
+        r = self.appointment_table.currentRow()
+        if r < 0:
             return
 
-        # Get appointment details from the table
-        self.selected_appointment_id = int(self.appointment_table.item(selected_row, 0).text())
-        patient_name = self.appointment_table.item(selected_row, 1).text()
-        date_time = self.appointment_table.item(selected_row, 2).text()
-        appointment_type = self.appointment_table.item(selected_row, 3).text()
-        reason = self.appointment_table.item(selected_row, 4).text()
-        vet = self.appointment_table.item(selected_row, 5).text()
-        status = self.appointment_table.item(selected_row, 6).text()
-
-        # Retrieve patient ID from the database
-        conn = sqlite3.connect('vet_management.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT patient_id FROM patients WHERE name = ?", (patient_name,))
-        patient_id = cursor.fetchone()
+        appt_id = int(self.appointment_table.item(r, 0).text())
+        conn = sqlite3.connect("vet_management.db")
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT patient_id, date_time, duration_minutes,
+                   appointment_type, reason, veterinarian, status
+            FROM appointments
+            WHERE appointment_id = ?
+        """, (appt_id,))
+        row = cur.fetchone()
         conn.close()
 
-        if not patient_id:
-            QMessageBox.warning(self, "Error", "Could not find the patient ID for the selected appointment.")
+        if not row:
+            QMessageBox.warning(self, "Error", "Could not load that appointment.")
             return
 
-        # Populate fields
-        self.patient_input.setText(f"{patient_name} (ID: {patient_id[0]})")
-        date, time = date_time.split(" ")
-        self.multi_calendar.selected_dates = {QDate.fromString(date, "yyyy-MM-dd")}
+        patient_id, dt, dur, typ, reason, vet, status = row
+
+        # Populate the form:
+        # → Patient line (you already have a completer + formatting):
+        name = next(n for pid, n in self.all_patients if pid == str(patient_id))
+        self.patient_input.setText(f"{name} (ID: {patient_id})")
+
+        # → Calendar & time
+        date_part, time_part = dt.split(" ")
+        self.multi_calendar.selected_dates = {QDate.fromString(date_part, "yyyy-MM-dd")}
         self.multi_calendar.update()
-        self.time_picker.setTime(QTime.fromString(time, "HH:mm"))
-        self.type_dropdown.setCurrentText(appointment_type)
+        self.time_picker.setTime(QTime.fromString(time_part, "HH:mm"))
+
+        # → Duration
+        self.duration_dropdown.setCurrentText(str(dur))
+
+        # → Rest of the fields
+        self.type_dropdown.setCurrentText(typ)
         self.reason_input.setText(reason)
         self.vet_dropdown.setCurrentText(vet)
         self.status_dropdown.setCurrentText(status)
 
-        # Enable Edit and Cancel buttons but disable Schedule button to avoid creating duplicate records
+        # Enable/disable buttons as before…
         self.schedule_button.setEnabled(False)
         self.edit_button.setEnabled(True)
         self.complete_button.setEnabled(status == "Scheduled")
-        self.cancel_button.setEnabled(status not in ["Completed", "Canceled"])
-        self.reminder_button.setEnabled(True)  # Enable the reminder button
-        self.create_invoice_button.setEnabled(True)  # Enable the Create Invoice button
+        self.cancel_button.setEnabled(status not in ("Completed", "Canceled"))
+        self.reminder_button.setEnabled(True)
+        self.create_invoice_button.setEnabled(True)
 
-
+        self.selected_appointment_id = appt_id
 
     def load_patient_details(self, patient_id, patient_name):
         """Load patient details into the appointment form."""
@@ -765,6 +897,9 @@ class AppointmentSchedulingScreen(QWidget):
         # Reset the time picker to the current time
         self.time_picker.setTime(QTime.currentTime())
 
+        # Reset duration back to default (30 min)
+        self.duration_dropdown.setCurrentText("30")
+
         # Reset the selected appointment ID
         self.selected_appointment_id = None
 
@@ -775,6 +910,3 @@ class AppointmentSchedulingScreen(QWidget):
         self.edit_button.setEnabled(False)
         self.complete_button.setEnabled(False)
         self.cancel_button.setEnabled(False)
-
-
-
