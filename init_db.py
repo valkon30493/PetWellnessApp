@@ -1,4 +1,3 @@
-
 import sqlite3
 from hashlib import sha256
 
@@ -54,6 +53,16 @@ CREATE TABLE IF NOT EXISTS appointments (
     FOREIGN KEY (patient_id) REFERENCES patients (patient_id)
 )
 ''')
+
+# ── Add duration_minutes if missing ──────────────────────────────────
+try:
+    cursor.execute("""
+      ALTER TABLE appointments
+        ADD COLUMN duration_minutes INTEGER NOT NULL DEFAULT 30
+    """)
+except sqlite3.OperationalError:
+    # column already exists
+    pass
 
 # --- Reminders Table ---
 cursor.execute('''
@@ -112,6 +121,56 @@ CREATE TABLE IF NOT EXISTS invoice_items (
 )
 ''')
 
+# ── Add VAT / Discount columns if missing ──────────────────────────
+for col, definition in [
+    ("vat_pct",        "REAL NOT NULL DEFAULT 0"),
+    ("vat_amount",     "REAL NOT NULL DEFAULT 0"),
+    ("vat_flag",       "TEXT NOT NULL DEFAULT ''"),
+    ("discount_pct",   "REAL NOT NULL DEFAULT 0"),
+    ("discount_amount","REAL NOT NULL DEFAULT 0")
+]:
+    try:
+        cursor.execute(f"""
+          ALTER TABLE invoice_items
+            ADD COLUMN {col} {definition}
+        """)
+    except sqlite3.OperationalError:
+        # column already exists
+        pass
+
+# ── INVENTORY ────────────────────────────────────────────────────────
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS items (
+  item_id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name               TEXT    NOT NULL,
+  description        TEXT,
+  unit_cost          REAL    NOT NULL DEFAULT 0,
+  unit_price         REAL    NOT NULL DEFAULT 0,
+  reorder_threshold  INTEGER NOT NULL DEFAULT 0
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS stock_movements (
+  movement_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id      INTEGER NOT NULL REFERENCES items(item_id),
+  change_qty   INTEGER NOT NULL,
+  reason       TEXT,
+  timestamp    TEXT    NOT NULL
+)
+""")
+
+# ── PRESCRIPTIONS ───────────────────────────────────────────────────
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS prescriptions (
+  prescription_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id       INTEGER NOT NULL REFERENCES patients(patient_id),
+  medication       TEXT    NOT NULL,
+  dosage           TEXT    NOT NULL,
+  instructions     TEXT,
+  date_issued      TEXT    NOT NULL
+)
+""")
 
 # --- Insert Default Roles ---
 roles = ['Admin', 'Veterinarian', 'Receptionist']
@@ -125,8 +184,10 @@ def create_user(username, password, role_name):
     role = cursor.fetchone()
     if role:
         role_id = role[0]
-        cursor.execute('INSERT OR IGNORE INTO users (username, password, role_id) VALUES (?, ?, ?)',
-                       (username, hashed_password, role_id))
+        cursor.execute(
+            'INSERT OR IGNORE INTO users (username, password, role_id) VALUES (?, ?, ?)',
+            (username, hashed_password, role_id)
+        )
 
 create_user('admin', 'admin123', 'Admin')
 

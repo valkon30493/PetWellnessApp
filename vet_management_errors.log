@@ -2,3 +2,46 @@
 2025-06-12 12:40:53,745 - ERROR - Database Error in load_invoices: too many values to unpack (expected 9)
 2025-06-12 12:44:10,999 - ERROR - Database Error in load_invoices: too many values to unpack (expected 9)
 2025-06-12 12:44:38,032 - ERROR - Database Error in load_invoices: too many values to unpack (expected 9)
+2025-06-16 17:42:37,461 - ERROR - Database Error in load_invoices: not enough values to unpack (expected 11, got 10)
+2025-06-16 17:45:15,988 - ERROR - Database Error in load_invoices: not enough values to unpack (expected 11, got 10)
+2025-06-16 17:46:01,029 - ERROR - Database Error in load_invoices: not enough values to unpack (expected 11, got 10)
+2025-06-20 10:56:20,214 - ERROR - Application startup error: 'BillingInvoicingScreen' object has no attribute 'print_invoice'
+2025-06-25 16:35:39,762 - ERROR - Application startup error: 'AppointmentSchedulingScreen' object has no attribute 'reload_patients'
+2025-06-25 16:35:51,077 - ERROR - Application startup error: 'AppointmentSchedulingScreen' object has no attribute 'reload_patients'
+2025-06-25 16:45:24,671 - ERROR - Application startup error: 'AppointmentSchedulingScreen' object has no attribute 'reload_patients'
+2025-06-25 16:45:29,352 - ERROR - Application startup error: 'AppointmentSchedulingScreen' object has no attribute 'reload_patients'
+2025-06-25 16:45:34,653 - ERROR - Application startup error: 'AppointmentSchedulingScreen' object has no attribute 'reload_patients'
+2025-06-25 16:50:13,426 - ERROR - Application startup error: 'AppointmentSchedulingScreen' object has no attribute 'reload_patients'
+2025-06-25 16:51:42,127 - ERROR - Application startup error: 'AppointmentSchedulingScreen' object has no attribute 'reload_patients'
+2025-06-25 16:53:35,716 - ERROR - Application startup error: 'AppointmentSchedulingScreen' object has no attribute 'reload_patients'
+2025-06-25 16:53:42,335 - ERROR - Application startup error: 'AppointmentSchedulingScreen' object has no attribute 'reload_patients'
+2025-06-29 18:22:34,233 - ERROR - Error in create_appointment: 'AppointmentSchedulingScreen' object has no attribute 'multi_calendar'
+2025-06-29 18:22:43,785 - ERROR - Error in create_appointment: 'AppointmentSchedulingScreen' object has no attribute 'multi_calendar'
+2025-06-29 18:23:21,936 - ERROR - Error in create_appointment: 'AppointmentSchedulingScreen' object has no attribute 'multi_calendar'
+2025-06-29 18:23:30,455 - ERROR - Error in create_appointment: 'AppointmentSchedulingScreen' object has no attribute 'multi_calendar'
+2025-06-29 18:23:52,358 - ERROR - Error in create_appointment: 'AppointmentSchedulingScreen' object has no attribute 'multi_calendar'
+2025-06-29 18:28:28,901 - ERROR - Application startup error: Failed to connect signal clicked().
+2025-07-02 13:13:12,026 - ERROR - Application startup error: no such column: id
+2025-07-02 13:29:30,628 - ERROR - Application startup error: no such column: id
+2025-07-02 13:32:44,891 - ERROR - Application startup error: no such column: id
+2025-07-02 13:33:43,632 - ERROR - Application startup error: no such column: id
+2025-07-02 13:34:21,523 - ERROR - Application startup error: no such column: id
+2025-07-02 13:37:55,341 - ERROR - Application startup error: 'AppointmentSchedulingScreen' object has no attribute 'check_and_send_notifications'
+2025-07-02 13:41:21,526 - ERROR - Application startup error: 'PySide6.QtWidgets.QComboBox' object has no attribute 'items'
+2025-07-07 13:50:20,909 - ERROR - Application startup error: type object 'PySide6.QtCore.Qt' has no attribute 'DefaultLocaleShortDate'
+2025-07-07 13:51:35,202 - ERROR - Application startup error: type object 'PySide6.QtCore.Qt' has no attribute 'DefaultLocaleShortDate'
+2025-07-07 13:52:43,792 - ERROR - Application startup error: type object 'PySide6.QtCore.Qt' has no attribute 'DefaultLocaleShortDate'
+2025-07-14 12:17:23,402 - ERROR - Application startup error: 'PySide6.QtWidgets.QHBoxLayout' object has no attribute 'addWidgets'
+2025-07-14 12:19:45,054 - ERROR - Application startup error: 'PySide6.QtWidgets.QHBoxLayout' object has no attribute 'addWidgets'
+2025-07-14 12:20:33,195 - ERROR - Application startup error: 'PySide6.QtWidgets.QHBoxLayout' object has no attribute 'addWidgets'
+2025-07-14 12:20:50,012 - ERROR - Application startup error: 'PySide6.QtWidgets.QHBoxLayout' object has no attribute 'addWidgets'
+2025-07-14 12:20:56,462 - ERROR - Application startup error: 'PySide6.QtWidgets.QHBoxLayout' object has no attribute 'addWidgets'
+2025-07-14 12:31:28,462 - ERROR - Inventory import failed: No module named 'inventory_management'
+2025-07-14 12:31:28,476 - ERROR - Prescription import failed: No module named 'prescription_management'
+2025-07-14 13:47:55,956 - ERROR - Inventory import failed: No module named 'inventory_management'
+2025-07-14 13:47:55,970 - ERROR - Prescription import failed: No module named 'prescription_management'
+2025-07-14 13:51:21,669 - ERROR - Inventory import failed: No module named 'inventory_management'
+2025-07-14 13:51:21,682 - ERROR - Prescription import failed: No module named 'prescription_management'
+2025-07-14 13:53:02,095 - ERROR - Startup error: 'PySide6.QtWidgets.QHBoxLayout' object has no attribute 'addWidgets'
+2025-07-14 13:53:07,123 - ERROR - Startup error: 'PySide6.QtWidgets.QHBoxLayout' object has no attribute 'addWidgets'
+2025-07-14 13:55:36,695 - ERROR - Application startup error: 'PySide6.QtWidgets.QHBoxLayout' object has no attribute 'addWidgets'
