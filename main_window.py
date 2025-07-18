@@ -11,6 +11,7 @@ from daily_appointments_calendar import DailyAppointmentsCalendar
 from billing_invoicing import BillingInvoicingScreen
 from error_log_viewer import ErrorLogViewer
 from logger import log_error
+from automations import create
 
 # —— inventory import with fallback —— #
 try:
@@ -146,19 +147,32 @@ class MainWindow(QMainWindow):
 
 # Run the application
 if __name__ == "__main__":
+    # 1) Schedule a daily low-stock summary at 20:00
+    try:
+        create(
+            title="Daily Low-Stock Summary",
+            prompt="Check for items where on_hand ≤ reorder_threshold and email me a list.",
+            schedule="""BEGIN:VEVENT
+RRULE:FREQ=DAILY;BYHOUR=20;BYMINUTE=0;BYSECOND=0
+END:VEVENT"""
+        )
+    except Exception as e:
+        log_error(f"Could not schedule daily low-stock summary: {e}")
+
+    # 2) Launch the Qt application
     try:
         app = QApplication(sys.argv)
 
-        # Load the QSS file
+        # Load your QSS theme if present
         try:
             with open("style.qss.txt", "r") as style_file:
                 app.setStyleSheet(style_file.read())
         except FileNotFoundError:
             print("Style file not found. Running without styles.")
 
-        # Create and display the main window
+        # Instantiate and show the main window
         main_window = MainWindow()
-        main_window.showFullScreen()  # Full-screen mode
+        main_window.showFullScreen()  # or .show() for windowed
         sys.exit(app.exec())
     except Exception as e:
-        log_error(f"Application startup error: {str(e)}")
+        log_error(f"Application startup error: {e}")
