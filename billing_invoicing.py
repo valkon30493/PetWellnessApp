@@ -8,6 +8,7 @@ from PySide6.QtCore import QDateTime, QTimer, QDate, Signal
 from PySide6 import QtGui
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog, QPrinterInfo
 from PySide6.QtGui import QTextDocument
+import inventory  # your existing inventory.py module
 import tempfile
 import os
 import sqlite3
@@ -1086,13 +1087,45 @@ class BillingInvoicingScreen(QWidget):
                     )
                 )
 
+            # ── AFTER you’ve deleted/inserted all your invoice_items but BEFORE COMMIT ──
+
+            # AUTO-STOCK DEDUCTION (same sqlite3 connection)
+            for row in range(self.item_table.rowCount()):
+                # we assume your "Description" column exactly matches an inventory item's name
+                desc = self.item_table.item(row, 0).text().strip()
+                qty = int(self.item_table.item(row, 1).text())
+
+                # look up the SKU
+                cursor.execute("SELECT item_id FROM items WHERE name = ?", (desc,))
+                res = cursor.fetchone()
+                if not res:
+                    continue
+                item_id = res[0]
+
+                # insert one stock_movement reducing on-hand
+                ts = datetime.now().isoformat(" ", "seconds")
+                cursor.execute("""
+                    INSERT INTO stock_movements
+                      (item_id, change_qty, reason, timestamp)
+                    VALUES (?,       ?,          ?,      ?)
+                """, (
+                    item_id,
+                    -qty,
+                    f"Sold/Dispensed via Invoice #{self.selected_invoice_id}",
+                    ts
+                ))
+
+
+            # ── NOW commit everything in one go ──
             conn.commit()
-            conn.close()
 
-            # 5) Finally, update invoice‐level balance & status
+
+            # 5) Finally, update invoice-level balance & status
             self.update_payment_status_and_balance(self.selected_invoice_id, final_amount)
-
             QMessageBox.information(self, "Success", "Invoice updated successfully.")
+
+
+
             self.finalize_button.setEnabled(False)
 
             # 6) Refresh the UI
@@ -1103,6 +1136,10 @@ class BillingInvoicingScreen(QWidget):
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Unexpected error: {e}")
+            log_error(f"Finalize Invoice #{self.selected_invoice_id} failed: {e}")
+
+        finally:
+            conn.close()
 
     def delete_invoice(self):
         """Delete the selected invoice."""

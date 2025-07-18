@@ -8,10 +8,11 @@ def get_all_items():
     conn = sqlite3.connect(DB)
     cur = conn.cursor()
     cur.execute("""
-        SELECT
-          i.item_id, i.name, i.description,
-          i.unit_cost, i.unit_price, i.reorder_threshold,
-          IFNULL(SUM(sm.change_qty),0) AS on_hand
+          SELECT
+      i.item_id, i.name, i.description,
+      i.unit_cost, i.unit_price,
+      IFNULL(SUM(sm.change_qty),0) AS on_hand,
+      i.reorder_threshold
         FROM items i
         LEFT JOIN stock_movements sm ON i.item_id=sm.item_id
         GROUP BY i.item_id
@@ -25,9 +26,10 @@ def items_below_reorder():
     cur = conn.cursor()
     cur.execute("""
         SELECT
-          i.item_id, i.name, i.description,
-          i.unit_cost, i.unit_price, i.reorder_threshold,
-          IFNULL(SUM(sm.change_qty),0) AS on_hand
+      i.item_id, i.name, i.description,
+      i.unit_cost, i.unit_price,
+      IFNULL(SUM(sm.change_qty),0) AS on_hand,
+      i.reorder_threshold
         FROM items i
         LEFT JOIN stock_movements sm ON i.item_id=sm.item_id
         GROUP BY i.item_id

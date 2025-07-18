@@ -106,6 +106,7 @@ class InventoryManagementScreen(QWidget):
         else:
             inventory.create_item(name, desc, cost, price, thr)
         self.refresh()
+        self.on_select()
         self.on_new()
 
     def on_delete(self):
@@ -116,6 +117,7 @@ class InventoryManagementScreen(QWidget):
         inventory.delete_item(self.selected_item_id)
         self.on_new()
         self.refresh()
+        self.on_select()
 
     def on_adjust(self):
         if not self.selected_item_id:
@@ -128,6 +130,7 @@ class InventoryManagementScreen(QWidget):
             reason = None
         inventory.adjust_stock(self.selected_item_id, qty, reason)
         self.refresh()
+        self.on_select()
 
     def on_export(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save CSV", "reorder_report.csv", "*.csv")
