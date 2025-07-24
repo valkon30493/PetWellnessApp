@@ -1,8 +1,9 @@
 import sys
-from PySide6.QtCore import Qt
+import traceback
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
-    QLabel, QStackedWidget, QPushButton
+    QLabel, QStackedWidget, QPushButton, QMessageBox
 )
 from patient_management import PatientManagementScreen
 from appointment_scheduling import AppointmentSchedulingScreen
@@ -11,7 +12,8 @@ from daily_appointments_calendar import DailyAppointmentsCalendar
 from billing_invoicing import BillingInvoicingScreen
 from error_log_viewer import ErrorLogViewer
 from logger import log_error
-from automations import create
+from notifications import send_low_stock_summary
+# from automations import create
 
 # —— inventory import with fallback —— #
 try:
@@ -31,6 +33,12 @@ except Exception as e:
         def __init__(self):
             super().__init__("⚠️ Prescription module failed to load")
 
+def schedule_low_stock_timer(main_win, to_email):
+    timer = QTimer(main_win)
+    timer.setTimerType(Qt.VeryCoarseTimer)
+    timer.timeout.connect(lambda: send_low_stock_summary(to_email))
+    timer.start(60 * 60 * 1000)  # fire every hour
+    return timer
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -144,35 +152,45 @@ class MainWindow(QMainWindow):
         self.billing_screen.load_invoice_details(appt_id)
         self.display_screen(2)
 
+    def schedule_low_stock_timer(main_window,to_email="you@clinic.com"):
+        from PySide6.QtCore import QTimer, QTime, Qt
+        timer = QTimer(main_win)
+        timer.setTimerType(Qt.VeryCoarseTimer)
+        timer.timeout.connect(lambda: send_low_stock_summary(to_email))
+        # fire every hour; inside handler you could check the hour==20,
+        # but for simplicity you’ll get mail at 20:00±the next full hour
+        timer.start(60 * 60 * 1000)
 
 # Run the application
 if __name__ == "__main__":
-    # 1) Schedule a daily low-stock summary at 20:00
+    # 1) Launch the Qt application
+    app = QApplication(sys.argv)
+
+    # 2) Load styles if available
     try:
-        create(
-            title="Daily Low-Stock Summary",
-            prompt="Check for items where on_hand ≤ reorder_threshold and email me a list.",
-            schedule="""BEGIN:VEVENT
-RRULE:FREQ=DAILY;BYHOUR=20;BYMINUTE=0;BYSECOND=0
-END:VEVENT"""
-        )
-    except Exception as e:
-        log_error(f"Could not schedule daily low-stock summary: {e}")
+        with open("style.qss.txt", "r") as style_file:
+            app.setStyleSheet(style_file.read())
+    except FileNotFoundError:
+        print("Style file not found. Running without styles.")
 
-    # 2) Launch the Qt application
+    # 3) Instantiate and show the main window
     try:
-        app = QApplication(sys.argv)
-
-        # Load your QSS theme if present
-        try:
-            with open("style.qss.txt", "r") as style_file:
-                app.setStyleSheet(style_file.read())
-        except FileNotFoundError:
-            print("Style file not found. Running without styles.")
-
-        # Instantiate and show the main window
         main_window = MainWindow()
-        main_window.showFullScreen()  # or .show() for windowed
+        main_window.showFullScreen()  # Or .show() for windowed mode
+        # keep a reference so it doesn’t get GC’d
+        main_window.low_stock_timer = schedule_low_stock_timer(main_window, to_email="valkon30493@gmail.com")
         sys.exit(app.exec())
-    except Exception as e:
-        log_error(f"Application startup error: {e}")
+    except Exception:
+        err_trace = traceback.format_exc()
+        # Print full traceback to console
+        print(err_trace)
+        # Log it
+        log_error(f"Application startup error:\n{err_trace}")
+        # Show a GUI error
+        QMessageBox.critical(
+            None,
+            "Startup Error",
+            "An unexpected error occurred while launching the application.\n"
+            "Please check the logs or console for details."
+        )
+        sys.exit(1)
