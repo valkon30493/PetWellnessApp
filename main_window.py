@@ -12,10 +12,10 @@ from daily_appointments_calendar import DailyAppointmentsCalendar
 from billing_invoicing import BillingInvoicingScreen
 from error_log_viewer import ErrorLogViewer
 from logger import log_error
-from notifications import send_low_stock_summary
-# from automations import create
+from user_management import UserManagementScreen
+from user_password_dialog import ChangeMyPasswordDialog
 
-# —— inventory import with fallback —— #
+# Inventory import with fallback
 try:
     from inventory_management import InventoryManagementScreen
 except Exception as e:
@@ -24,7 +24,7 @@ except Exception as e:
         def __init__(self):
             super().__init__("⚠️ Inventory module failed to load")
 
-# —— prescription import with fallback —— #
+# Prescription import with fallback
 try:
     from prescription_management import PrescriptionManagementScreen
 except Exception as e:
@@ -33,18 +33,14 @@ except Exception as e:
         def __init__(self):
             super().__init__("⚠️ Prescription module failed to load")
 
-def schedule_low_stock_timer(main_win, to_email):
-    timer = QTimer(main_win)
-    timer.setTimerType(Qt.VeryCoarseTimer)
-    timer.timeout.connect(lambda: send_low_stock_summary(to_email))
-    timer.start(60 * 60 * 1000)  # fire every hour
-    return timer
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Veterinary Management System")
         self.setGeometry(100, 100, 1600, 900)
+
+        self.user_role = "Guest"
+        self.logged_in_username = None
 
         # Sidebar buttons
         self.patient_button      = QPushButton("Patient Management")
@@ -55,10 +51,12 @@ class MainWindow(QMainWindow):
         self.notifications_button= QPushButton("Notifications & Reminders")
         self.basic_reports_button= QPushButton("Reports")
         self.analytics_button    = QPushButton("Analytics & Reports")
+        self.user_mgmt_button    = QPushButton("User Management")
+        self.my_account_button   = QPushButton("My Account")
         self.error_log_button    = QPushButton("View Error Logs")
         self.fullscreen_button   = QPushButton("Exit Full Screen")
 
-        # connect
+        # Connect buttons
         self.patient_button.clicked.connect(lambda: self.display_screen(0))
         self.appointment_button.clicked.connect(lambda: self.display_screen(1))
         self.billing_button.clicked.connect(lambda: self.display_screen(2))
@@ -67,22 +65,25 @@ class MainWindow(QMainWindow):
         self.notifications_button.clicked.connect(lambda: self.display_screen(5))
         self.basic_reports_button.clicked.connect(lambda: self.display_screen(6))
         self.analytics_button.clicked.connect(lambda: self.display_screen(7))
+        self.user_mgmt_button.clicked.connect(lambda: self.display_screen(8))
+        self.my_account_button.clicked.connect(self.open_account_settings)
         self.error_log_button.clicked.connect(self.open_error_logs)
         self.fullscreen_button.clicked.connect(self.toggle_fullscreen)
 
+        # Sidebar layout
         sidebar_layout = QVBoxLayout()
         for w in (
             self.patient_button, self.appointment_button, self.billing_button,
             self.inventory_button, self.prescription_button,
             self.notifications_button, self.basic_reports_button,
-            self.analytics_button
+            self.analytics_button, self.user_mgmt_button, self.my_account_button
         ):
             sidebar_layout.addWidget(w)
         sidebar_layout.addStretch(1)
         sidebar_layout.addWidget(self.error_log_button)
         sidebar_layout.addWidget(self.fullscreen_button)
 
-        # instantiate all screens
+        # Screens
         self.patient_screen      = PatientManagementScreen()
         self.appointment_screen  = AppointmentSchedulingScreen()
         self.billing_screen      = BillingInvoicingScreen()
@@ -91,8 +92,9 @@ class MainWindow(QMainWindow):
         self.notifications_screen= NotificationsRemindersScreen()
         self.reports_screen      = QLabel("Reports Screen")
         self.analytics_screen    = QLabel("Analytics & Reports Screen")
+        self.user_mgmt_screen    = UserManagementScreen()
 
-        # connect cross‐screen signals
+        # Cross-screen connections
         self.patient_screen.patient_list_updated.connect(self.appointment_screen.reload_patients)
         self.patient_screen.patient_selected.connect(self.appointment_screen.load_patient_details)
         self.patient_screen.patient_selected.connect(self.handle_patient_selected)
@@ -100,19 +102,19 @@ class MainWindow(QMainWindow):
         self.appointment_screen.navigate_to_billing_signal.connect(self.navigate_to_billing_screen)
         self.billing_screen.invoiceSelected.connect(self.notifications_screen.load_reminders)
 
-        # stacked widget
+        # Stacked widget
         self.stacked = QStackedWidget()
         for screen in (
             self.patient_screen, self.appointment_screen, self.billing_screen,
             self.inventory_screen, self.prescription_screen, self.notifications_screen,
-            self.reports_screen, self.analytics_screen
+            self.reports_screen, self.analytics_screen, self.user_mgmt_screen
         ):
             self.stacked.addWidget(screen)
 
-        # calendar
+        # Calendar
         self.calendar_widget = DailyAppointmentsCalendar()
 
-        # layout
+        # Main layout
         main_layout = QHBoxLayout()
         sidebar_plus_cal = QVBoxLayout()
         sidebar_plus_cal.addWidget(self.calendar_widget, 2)
@@ -152,45 +154,35 @@ class MainWindow(QMainWindow):
         self.billing_screen.load_invoice_details(appt_id)
         self.display_screen(2)
 
-    def schedule_low_stock_timer(main_window,to_email="you@clinic.com"):
-        from PySide6.QtCore import QTimer, QTime, Qt
-        timer = QTimer(main_win)
-        timer.setTimerType(Qt.VeryCoarseTimer)
-        timer.timeout.connect(lambda: send_low_stock_summary(to_email))
-        # fire every hour; inside handler you could check the hour==20,
-        # but for simplicity you’ll get mail at 20:00±the next full hour
-        timer.start(60 * 60 * 1000)
+    def set_user_context(self, username, role):
+        self.logged_in_username = username
+        self.user_role = role
+        self.adjust_ui_for_role()
 
-# Run the application
-if __name__ == "__main__":
-    # 1) Launch the Qt application
-    app = QApplication(sys.argv)
+    def adjust_ui_for_role(self):
+        role = self.user_role.lower()
 
-    # 2) Load styles if available
-    try:
-        with open("style.qss.txt", "r") as style_file:
-            app.setStyleSheet(style_file.read())
-    except FileNotFoundError:
-        print("Style file not found. Running without styles.")
+        if role == "admin":
+            self.user_mgmt_button.setEnabled(True)
+            return
 
-    # 3) Instantiate and show the main window
-    try:
-        main_window = MainWindow()
-        main_window.showFullScreen()  # Or .show() for windowed mode
-        # keep a reference so it doesn’t get GC’d
-        main_window.low_stock_timer = schedule_low_stock_timer(main_window, to_email="valkon30493@gmail.com")
-        sys.exit(app.exec())
-    except Exception:
-        err_trace = traceback.format_exc()
-        # Print full traceback to console
-        print(err_trace)
-        # Log it
-        log_error(f"Application startup error:\n{err_trace}")
-        # Show a GUI error
-        QMessageBox.critical(
-            None,
-            "Startup Error",
-            "An unexpected error occurred while launching the application.\n"
-            "Please check the logs or console for details."
-        )
-        sys.exit(1)
+        if role == "veterinarian":
+            self.billing_button.setEnabled(False)
+            self.inventory_button.setEnabled(False)
+            self.analytics_button.setEnabled(False)
+            self.basic_reports_button.setEnabled(False)
+            self.user_mgmt_button.setEnabled(False)
+
+        if role == "receptionist":
+            self.prescription_button.setEnabled(False)
+            self.inventory_button.setEnabled(False)
+            self.analytics_button.setEnabled(False)
+            self.basic_reports_button.setEnabled(False)
+            self.user_mgmt_button.setEnabled(False)
+
+    def open_account_settings(self):
+        if not self.logged_in_username:
+            QMessageBox.warning(self, "Error", "No logged-in user.")
+            return
+        dlg = ChangeMyPasswordDialog(self.logged_in_username)
+        dlg.exec()
