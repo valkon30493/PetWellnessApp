@@ -14,6 +14,8 @@ from error_log_viewer import ErrorLogViewer
 from logger import log_error
 from user_management import UserManagementScreen
 from user_password_dialog import ChangeMyPasswordDialog
+from reports_analytics import ReportsAnalyticsScreen
+
 
 # Inventory import with fallback
 try:
@@ -91,7 +93,7 @@ class MainWindow(QMainWindow):
         self.prescription_screen = PrescriptionManagementScreen()
         self.notifications_screen= NotificationsRemindersScreen()
         self.reports_screen      = QLabel("Reports Screen")
-        self.analytics_screen    = QLabel("Analytics & Reports Screen")
+        self.analytics_screen = ReportsAnalyticsScreen()
         self.user_mgmt_screen    = UserManagementScreen()
 
         # Cross-screen connections
