@@ -991,7 +991,7 @@ class BillingInvoicingScreen(QWidget):
             QMessageBox.critical(self, "Error", "Failed to create draft invoice.")
 
     def edit_invoice(self):
-        """Edit an existing invoice and update all invoice_items including VAT‐ & discount‐fractions."""
+        """Edit an existing invoice, update items & auto‐deduct stock once."""
         if not self.selected_invoice_id:
             QMessageBox.warning(self, "No Invoice Selected", "Please select an invoice to edit.")
             return
@@ -1001,145 +1001,136 @@ class BillingInvoicingScreen(QWidget):
             QMessageBox.warning(self, "Input Error", "Appointment ID is required.")
             return
 
+        conn = None
         try:
-            # 1) Recalculate totals from the UI
+            # 1) Recalculate from the UI
             total_amount, final_amount = self.calculate_totals_from_items()
-            tax = self.tax_input.value()
-            discount = self.discount_input.value()
+            tax            = self.tax_input.value()
+            discount       = self.discount_input.value()
             payment_status = self.payment_status_dropdown.currentText()
             payment_method = self.payment_method_dropdown.currentText()
 
-            conn = sqlite3.connect("vet_management.db")
+            conn   = sqlite3.connect("vet_management.db")
             cursor = conn.cursor()
 
-            # 2) Update the invoices table
-            cursor.execute(
-                """
+            # 2) Update invoices table
+            cursor.execute("""
                 UPDATE invoices
-                   SET appointment_id = ?, total_amount = ?, tax = ?, discount = ?,
-                       final_amount = ?, payment_status = ?, payment_method = ?
+                   SET appointment_id   = ?,
+                       total_amount     = ?,
+                       tax              = ?,
+                       discount         = ?,
+                       final_amount     = ?,
+                       payment_status   = ?,
+                       payment_method   = ?
                  WHERE invoice_id = ?
-                """,
-                (
-                    appointment_id, total_amount, tax, discount,
-                    final_amount, payment_status, payment_method,
-                    self.selected_invoice_id
-                )
-            )
+            """, (
+                appointment_id,
+                total_amount,
+                tax,
+                discount,
+                final_amount,
+                payment_status,
+                payment_method,
+                self.selected_invoice_id
+            ))
 
-            # 3) Wipe out old items
+            # 3) Remove old line‐items
             cursor.execute(
                 "DELETE FROM invoice_items WHERE invoice_id = ?",
                 (self.selected_invoice_id,)
             )
 
-            # 4) Re‐insert each row, this time including vat_pct, discount_pct & vat_flag
+            # 4) Re‐insert each row with VAT/discount fractions
             for row in range(self.item_table.rowCount()):
-                desc = self.item_table.item(row, 0).text().strip()
-                qty = int(self.item_table.item(row, 1).text())
-                unit_price = float(self.item_table.item(row, 2).text())
-                vat_amount = float(self.item_table.item(row, 3).text())
+                desc            = self.item_table.item(row, 0).text().strip()
+                qty             = int(self.item_table.item(row, 1).text())
+                unit_price      = float(self.item_table.item(row, 2).text())
+                vat_amount      = float(self.item_table.item(row, 3).text())
                 discount_amount = float(self.item_table.item(row, 4).text())
-                total_price = float(self.item_table.item(row, 5).text())
+                total_price     = float(self.item_table.item(row, 5).text())
 
-                # recompute fractions
-                base = qty * unit_price if qty and unit_price else 1
-                vat_frac = vat_amount / base
+                base = (qty * unit_price) if (qty and unit_price) else 1.0
+                vat_frac      = vat_amount      / base
                 discount_frac = discount_amount / base
-
-                # integer % for storage
-                vat_pct = vat_frac * 100
-                disc_pct = discount_frac * 100
-
-                # default flags if missing
-                rate = int(round(vat_pct))
+                rate = int(round(vat_frac * 100))
                 if rate not in (5, 19):
-                    # fall back: small-amount => 5%, large => 19%
                     rate = 5 if vat_amount < 1 else 19
                 flag = "B" if rate == 5 else "C" if rate == 19 else ""
 
-                cursor.execute(
-                    """
+                cursor.execute("""
                     INSERT INTO invoice_items
-                      (invoice_id,
-                       description,
-                       quantity,
-                       unit_price,
-                       vat_pct,
-                       vat_amount,
-                       discount_pct,
-                       discount_amount,
-                       total_price,
-                       vat_flag)
+                      (invoice_id, description, quantity, unit_price,
+                       vat_pct, vat_amount, discount_pct, discount_amount,
+                       total_price, vat_flag)
                     VALUES (?,?,?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        self.selected_invoice_id,
-                        desc,
-                        qty,
-                        unit_price,
-                        vat_frac,  # store as fraction 0.19 or 0.05
-                        vat_amount,
-                        discount_frac,  # store as fraction, too
-                        discount_amount,
-                        total_price,
-                        flag
-                    )
-                )
+                """, (
+                    self.selected_invoice_id,
+                    desc, qty, unit_price,
+                    vat_frac, vat_amount,
+                    discount_frac, discount_amount,
+                    total_price, flag
+                ))
 
-            # ── AFTER you’ve deleted/inserted all your invoice_items but BEFORE COMMIT ──
-
-            # AUTO-STOCK DEDUCTION (same sqlite3 connection)
+            # ── AUTO‐STOCK DEDUCTION ─────────────────────────────────────────────
+            reason_prefix = f"Sold/Dispensed via Invoice #{self.selected_invoice_id}"
             for row in range(self.item_table.rowCount()):
-                # we assume your "Description" column exactly matches an inventory item's name
                 desc = self.item_table.item(row, 0).text().strip()
-                qty = int(self.item_table.item(row, 1).text())
+                qty  = int(self.item_table.item(row, 1).text())
 
-                # look up the SKU
+                # lookup item_id
                 cursor.execute("SELECT item_id FROM items WHERE name = ?", (desc,))
-                res = cursor.fetchone()
-                if not res:
+                rec = cursor.fetchone()
+                if not rec:
                     continue
-                item_id = res[0]
+                item_id = rec[0]
 
-                # insert one stock_movement reducing on-hand
+                full_reason = f"{reason_prefix} — {qty}×{desc}"
+
+                # avoid duplicates by exact match on reason
+                cursor.execute("""
+                    SELECT COUNT(*) FROM stock_movements
+                     WHERE item_id = ?
+                       AND reason   = ?
+                """, (item_id, full_reason))
+                already, = cursor.fetchone()
+                if already:
+                    continue
+
                 ts = datetime.now().isoformat(" ", "seconds")
                 cursor.execute("""
                     INSERT INTO stock_movements
                       (item_id, change_qty, reason, timestamp)
-                    VALUES (?,       ?,          ?,      ?)
+                    VALUES (?,       ?,         ?,      ?)
                 """, (
                     item_id,
                     -qty,
-                    f"Sold/Dispensed via Invoice #{self.selected_invoice_id}",
+                    full_reason,
                     ts
                 ))
 
-
-            # ── NOW commit everything in one go ──
+            # ── COMMIT EVERYTHING ─────────────────────────────────────────────────
             conn.commit()
 
-
-            # 5) Finally, update invoice-level balance & status
+            # 5) Update invoice‐level balance & status (uses same DB)
             self.update_payment_status_and_balance(self.selected_invoice_id, final_amount)
+
             QMessageBox.information(self, "Success", "Invoice updated successfully.")
-
-
-
             self.finalize_button.setEnabled(False)
 
-            # 6) Refresh the UI
+            # 6) Refresh UI
             self.load_invoices()
             self.clear_inputs()
             self.clear_invoice_form()
             self.calculate_final_amount()
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Unexpected error: {e}")
             log_error(f"Finalize Invoice #{self.selected_invoice_id} failed: {e}")
+            QMessageBox.critical(self, "Error", f"Unexpected error: {e}")
 
         finally:
-            conn.close()
+            if conn:
+                conn.close()
 
     def delete_invoice(self):
         """Delete the selected invoice."""

@@ -61,6 +61,7 @@ class InventoryManagementScreen(QWidget):
         self.export_btn.clicked.connect(self.on_export)
 
         self.refresh()
+        self.check_low_stock_and_alert()
 
     def refresh(self):
         self.table.setRowCount(0)
@@ -131,6 +132,7 @@ class InventoryManagementScreen(QWidget):
         inventory.adjust_stock(self.selected_item_id, qty, reason)
         self.refresh()
         self.on_select()
+        self.check_low_stock_and_alert()
 
     def on_export(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save CSV", "reorder_report.csv", "*.csv")
@@ -142,3 +144,16 @@ class InventoryManagementScreen(QWidget):
             w.writerow(["ID","Name","Desc","Cost","Price","Threshold","OnHand"])
             w.writerows(rows)
         QMessageBox.information(self, "Exported", f"Saved to {path}")
+
+    def check_low_stock_and_alert(self):
+        low = inventory.items_below_reorder()
+        if not low:
+            return
+        # Build a friendly HTML list
+        lines = [f"{row[1]} (On-Hand: {row[5]}, Reorder @ {row[6]})" for row in low]
+        QMessageBox.warning(
+            self,
+            "Low Stock Warning",
+            "<b>The following items are at or below reorder level:</b><br>" +
+            "<br>".join(lines)
+        )

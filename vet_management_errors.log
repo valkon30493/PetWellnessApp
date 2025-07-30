@@ -45,3 +45,84 @@
 2025-07-14 13:53:02,095 - ERROR - Startup error: 'PySide6.QtWidgets.QHBoxLayout' object has no attribute 'addWidgets'
 2025-07-14 13:53:07,123 - ERROR - Startup error: 'PySide6.QtWidgets.QHBoxLayout' object has no attribute 'addWidgets'
 2025-07-14 13:55:36,695 - ERROR - Application startup error: 'PySide6.QtWidgets.QHBoxLayout' object has no attribute 'addWidgets'
+2025-07-18 11:21:05,616 - ERROR - Application startup error: near "SELECT": syntax error
+2025-07-18 11:21:14,738 - ERROR - Application startup error: near "SELECT": syntax error
+2025-07-18 11:22:06,825 - ERROR - Application startup error: near "SELECT": syntax error
+2025-07-18 11:22:29,278 - ERROR - Application startup error: near "SELECT": syntax error
+2025-07-18 11:30:12,844 - ERROR - Application startup error: near "SELECT": syntax error
+2025-07-18 11:34:38,570 - ERROR - Application startup error: near "SELECT": syntax error
+2025-07-18 11:35:46,140 - ERROR - Application startup error: near "SELECT": syntax error
+2025-07-18 11:47:18,640 - ERROR - Application startup error: near "SELECT": syntax error
+2025-07-18 14:57:49,711 - ERROR - Could not schedule daily low-stock summary: name 'create' is not defined
+2025-07-18 15:01:00,532 - ERROR - Could not schedule daily low-stock summary: name 'create' is not defined
+2025-07-18 15:03:50,735 - ERROR - Could not schedule daily low-stock summary: name 'create' is not defined
+2025-07-18 15:04:33,312 - ERROR - Could not schedule daily low-stock summary: name 'create' is not defined
+2025-07-18 15:10:30,849 - ERROR - Could not schedule daily low-stock summary: name 'create' is not defined
+2025-07-18 15:32:44,589 - ERROR - Could not schedule daily low-stock summary: name 'create' is not defined
+2025-07-18 15:33:02,869 - ERROR - Application startup error: 'PrescriptionManagementScreen' object has no attribute 'on_print_rx'
+2025-07-18 15:33:15,684 - ERROR - Could not schedule daily low-stock summary: name 'create' is not defined
+2025-07-18 15:33:19,018 - ERROR - Application startup error: 'PrescriptionManagementScreen' object has no attribute 'on_print_rx'
+2025-07-18 15:34:28,604 - ERROR - Could not schedule daily low-stock summary: name 'create' is not defined
+2025-07-18 15:34:31,626 - ERROR - Application startup error: 'PrescriptionManagementScreen' object has no attribute 'on_print_rx'
+2025-07-18 15:49:11,843 - ERROR - Application startup error:
+Traceback (most recent call last):
+  File "C:\Users\valentinosko\PycharmProjects\PetWellnessApp\main_window.py", line 163, in <module>
+    main_window = MainWindow()
+                  ^^^^^^^^^^^^
+  File "C:\Users\valentinosko\PycharmProjects\PetWellnessApp\main_window.py", line 83, in __init__
+    self.prescription_screen = PrescriptionManagementScreen()
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\valentinosko\PycharmProjects\PetWellnessApp\prescription_management.py", line 58, in __init__
+    ("Print Rx", self.on_print_rx),
+                 ^^^^^^^^^^^^^^^^
+AttributeError: 'PrescriptionManagementScreen' object has no attribute 'on_print_rx'
+
+2025-07-23 17:08:01,631 - ERROR - Application startup error:
+Traceback (most recent call last):
+  File "C:\Users\valentinosko\PycharmProjects\PetWellnessApp\main_window.py", line 174, in <module>
+    schedule_low_stock_timer(main_window)
+    ^^^^^^^^^^^^^^^^^^^^^^^^
+NameError: name 'schedule_low_stock_timer' is not defined
+
+2025-07-24 09:40:19,213 - ERROR - Application startup error:
+Traceback (most recent call last):
+  File "C:\Users\valentinosko\PycharmProjects\PetWellnessApp\main_window.py", line 175, in <module>
+    main_window.low_stock_timer = schedule_low_stock_timer(main_window, to_email="valkon30493@gmail.com")
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^
+NameError: name 'schedule_low_stock_timer' is not defined
+
+2025-07-24 22:03:40,931 - ERROR - Low-stock summary email failed: no such column: on_hand
+2025-07-25 12:02:14,616 - ERROR - Application startup error:
+Traceback (most recent call last):
+  File "C:\Users\valentinosko\PycharmProjects\PetWellnessApp\main_window.py", line 195, in <module>
+    send_low_stock_summary("valkon30493@gmail.com")
+  File "C:\Users\valentinosko\PycharmProjects\PetWellnessApp\notifications.py", line 52, in send_low_stock_summary
+    cur.execute("""
+sqlite3.OperationalError: no such column: on_hand
+
+2025-07-25 12:03:22,913 - ERROR - Application startup error:
+Traceback (most recent call last):
+  File "C:\Users\valentinosko\PycharmProjects\PetWellnessApp\main_window.py", line 195, in <module>
+    send_low_stock_summary("valkon30493@gmail.com")
+  File "C:\Users\valentinosko\PycharmProjects\PetWellnessApp\notifications.py", line 52, in send_low_stock_summary
+    cur.execute("""
+sqlite3.OperationalError: no such column: on_hand
+
+2025-07-25 12:03:58,363 - ERROR - Application startup error:
+Traceback (most recent call last):
+  File "C:\Users\valentinosko\PycharmProjects\PetWellnessApp\main_window.py", line 195, in <module>
+    send_low_stock_summary("valkon30493@gmail.com")
+  File "C:\Users\valentinosko\PycharmProjects\PetWellnessApp\notifications.py", line 58, in send_low_stock_summary
+    cur.execute("""
+sqlite3.OperationalError: no such column: on_hand
+
+2025-07-25 12:04:33,389 - ERROR - Application startup error:
+Traceback (most recent call last):
+  File "C:\Users\valentinosko\PycharmProjects\PetWellnessApp\main_window.py", line 195, in <module>
+    send_low_stock_timer("valkon30493@gmail.com")
+    ^^^^^^^^^^^^^^^^^^^^
+NameError: name 'send_low_stock_timer' is not defined. Did you mean: 'send_low_stock_summary'?
+
+2025-07-25 12:06:02,481 - ERROR - Low-stock summary email failed: no such column: on_hand
+2025-07-25 12:42:15,852 - ERROR - Low-stock summary email failed: no such column: on_hand
+2025-07-25 12:50:46,689 - ERROR - Low-stock summary email failed: no such column: on_hand

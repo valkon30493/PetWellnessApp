@@ -172,6 +172,24 @@ CREATE TABLE IF NOT EXISTS prescriptions (
 )
 """)
 
+# add status column
+try:
+    cursor.execute("ALTER TABLE prescriptions ADD COLUMN status TEXT NOT NULL DEFAULT 'New'")
+except sqlite3.OperationalError:
+    pass  # already added
+
+# audit trail
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS prescription_history (
+    history_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    prescription_id  INTEGER NOT NULL REFERENCES prescriptions(prescription_id),
+    user_id          INTEGER,             -- if you have user login
+    action           TEXT    NOT NULL,
+    timestamp        TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    changes_json     TEXT
+)
+""")
+
 # --- Insert Default Roles ---
 roles = ['Admin', 'Veterinarian', 'Receptionist']
 for role in roles:
@@ -190,6 +208,9 @@ def create_user(username, password, role_name):
         )
 
 create_user('admin', 'admin123', 'Admin')
+create_user('vetuser', 'vet123', 'Veterinarian')
+create_user('reception', 'recep123', 'Receptionist')
+
 
 # --- Commit & Close ---
 conn.commit()
