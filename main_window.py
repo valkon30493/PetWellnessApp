@@ -15,7 +15,9 @@ from logger import log_error
 from user_management import UserManagementScreen
 from user_password_dialog import ChangeMyPasswordDialog
 from reports_analytics import ReportsAnalyticsScreen
-
+from medical_records import MedicalRecordsScreen
+from consent_dialog import ConsentDialog
+from consent_forms import ConsentFormsScreen
 
 # Inventory import with fallback
 try:
@@ -50,6 +52,8 @@ class MainWindow(QMainWindow):
         self.billing_button      = QPushButton("Billing & Invoicing")
         self.inventory_button    = QPushButton("Inventory Management")
         self.prescription_button = QPushButton("Prescription Management")
+        self.medrec_button       = QPushButton("Medical Records")
+        self.consent_button      = QPushButton("Consent Forms")
         self.notifications_button= QPushButton("Notifications & Reminders")
         self.basic_reports_button= QPushButton("Reports")
         self.analytics_button    = QPushButton("Analytics & Reports")
@@ -64,10 +68,12 @@ class MainWindow(QMainWindow):
         self.billing_button.clicked.connect(lambda: self.display_screen(2))
         self.inventory_button.clicked.connect(lambda: self.display_screen(3))
         self.prescription_button.clicked.connect(lambda: self.display_screen(4))
-        self.notifications_button.clicked.connect(lambda: self.display_screen(5))
-        self.basic_reports_button.clicked.connect(lambda: self.display_screen(6))
-        self.analytics_button.clicked.connect(lambda: self.display_screen(7))
-        self.user_mgmt_button.clicked.connect(lambda: self.display_screen(8))
+        self.medrec_button.clicked.connect(lambda: self.display_screen(5))
+        self.consent_button.clicked.connect(lambda: self.display_screen(6))
+        self.notifications_button.clicked.connect(lambda: self.display_screen(7))
+        self.basic_reports_button.clicked.connect(lambda: self.display_screen(8))
+        self.analytics_button.clicked.connect(lambda: self.display_screen(9))
+        self.user_mgmt_button.clicked.connect(lambda: self.display_screen(10))
         self.my_account_button.clicked.connect(self.open_account_settings)
         self.error_log_button.clicked.connect(self.open_error_logs)
         self.fullscreen_button.clicked.connect(self.toggle_fullscreen)
@@ -76,7 +82,7 @@ class MainWindow(QMainWindow):
         sidebar_layout = QVBoxLayout()
         for w in (
             self.patient_button, self.appointment_button, self.billing_button,
-            self.inventory_button, self.prescription_button,
+            self.inventory_button, self.prescription_button, self.medrec_button, self.consent_button,
             self.notifications_button, self.basic_reports_button,
             self.analytics_button, self.user_mgmt_button, self.my_account_button
         ):
@@ -91,6 +97,8 @@ class MainWindow(QMainWindow):
         self.billing_screen      = BillingInvoicingScreen()
         self.inventory_screen    = InventoryManagementScreen()
         self.prescription_screen = PrescriptionManagementScreen()
+        self.medrec_screen       = MedicalRecordsScreen()
+        self.consent_screen = ConsentFormsScreen()
         self.notifications_screen= NotificationsRemindersScreen()
         self.reports_screen      = QLabel("Reports Screen")
         self.analytics_screen = ReportsAnalyticsScreen()
@@ -100,6 +108,10 @@ class MainWindow(QMainWindow):
         self.patient_screen.patient_list_updated.connect(self.appointment_screen.reload_patients)
         self.patient_screen.patient_selected.connect(self.appointment_screen.load_patient_details)
         self.patient_screen.patient_selected.connect(self.handle_patient_selected)
+        self.patient_screen.create_medical_record.connect(self.open_med_record_from_patient)
+        self.patient_screen.create_consent_requested.connect(
+            lambda pid, pname: self._open_consent_for_patient(pid, pname)
+        )
         self.appointment_screen.reminders_list_updated.connect(self.notifications_screen.reload_reminders)
         self.appointment_screen.navigate_to_billing_signal.connect(self.navigate_to_billing_screen)
         self.billing_screen.invoiceSelected.connect(self.notifications_screen.load_reminders)
@@ -108,7 +120,8 @@ class MainWindow(QMainWindow):
         self.stacked = QStackedWidget()
         for screen in (
             self.patient_screen, self.appointment_screen, self.billing_screen,
-            self.inventory_screen, self.prescription_screen, self.notifications_screen,
+            self.inventory_screen, self.prescription_screen, self.medrec_screen, self.consent_screen,
+            self.notifications_screen,
             self.reports_screen, self.analytics_screen, self.user_mgmt_screen
         ):
             self.stacked.addWidget(screen)
@@ -188,3 +201,22 @@ class MainWindow(QMainWindow):
             return
         dlg = ChangeMyPasswordDialog(self.logged_in_username)
         dlg.exec()
+
+    def open_med_record_from_patient(self, patient_id: int, patient_name: str):
+        # preselect the patient on the medical records screen
+        try:
+            self.medrec_screen.focus_on_patient(patient_id, patient_name)
+        except Exception as e:
+            log_error(f"MedicalRecords focus failed: {e}")
+        # show the Medical Records screen
+        idx = self.stacked.indexOf(self.medrec_screen)
+        if idx != -1:
+            self.display_screen(idx)
+
+    def _open_consent_for_patient(self, pid, pname):
+        # tell the consent screen who the patient is
+        self.consent_screen.quick_create_for(pid, pname)
+        # switch to it
+        # find index of consent_screen in stacked:
+        idx = self.stacked.indexOf(self.consent_screen)
+        self.display_screen(idx)

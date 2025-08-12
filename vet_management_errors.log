@@ -126,3 +126,23 @@ NameError: name 'send_low_stock_timer' is not defined. Did you mean: 'send_low_s
 2025-07-25 12:06:02,481 - ERROR - Low-stock summary email failed: no such column: on_hand
 2025-07-25 12:42:15,852 - ERROR - Low-stock summary email failed: no such column: on_hand
 2025-07-25 12:50:46,689 - ERROR - Low-stock summary email failed: no such column: on_hand
+2025-08-11 16:16:19,526 - ERROR - ConsentDialog failed: cannot access local variable 'QComboBox' where it is not associated with a value
+2025-08-11 16:16:31,267 - ERROR - ConsentDialog failed: cannot access local variable 'QComboBox' where it is not associated with a value
+2025-08-11 16:16:32,307 - ERROR - ConsentDialog failed: cannot access local variable 'QComboBox' where it is not associated with a value
+2025-08-11 16:16:32,498 - ERROR - ConsentDialog failed: cannot access local variable 'QComboBox' where it is not associated with a value
+2025-08-11 16:16:32,735 - ERROR - ConsentDialog failed: cannot access local variable 'QComboBox' where it is not associated with a value
+2025-08-11 16:16:34,755 - ERROR - ConsentDialog failed: cannot access local variable 'QComboBox' where it is not associated with a value
+2025-08-11 16:16:37,088 - ERROR - ConsentDialog failed: cannot access local variable 'QComboBox' where it is not associated with a value
+2025-08-11 16:16:38,794 - ERROR - ConsentDialog failed: cannot access local variable 'QComboBox' where it is not associated with a value
+2025-08-11 16:16:41,442 - ERROR - ConsentDialog failed: cannot access local variable 'QComboBox' where it is not associated with a value
+2025-08-11 16:17:00,512 - ERROR - ConsentDialog failed: cannot access local variable 'QComboBox' where it is not associated with a value
+2025-08-11 16:29:50,773 - ERROR - ConsentDialog failed: 'ConsentDialog' object has no attribute 'create_reminder'
+2025-08-11 16:29:52,570 - ERROR - ConsentDialog failed: 'ConsentDialog' object has no attribute 'create_reminder'
+2025-08-11 16:29:52,833 - ERROR - ConsentDialog failed: 'ConsentDialog' object has no attribute 'create_reminder'
+2025-08-11 16:30:08,190 - ERROR - ConsentDialog failed: 'ConsentDialog' object has no attribute 'create_reminder'
+2025-08-11 16:30:08,616 - ERROR - ConsentDialog failed: 'ConsentDialog' object has no attribute 'create_reminder'
+2025-08-11 16:30:08,787 - ERROR - ConsentDialog failed: 'ConsentDialog' object has no attribute 'create_reminder'
+2025-08-11 16:30:08,963 - ERROR - ConsentDialog failed: 'ConsentDialog' object has no attribute 'create_reminder'
+2025-08-11 16:30:09,138 - ERROR - ConsentDialog failed: 'ConsentDialog' object has no attribute 'create_reminder'
+2025-08-12 12:33:32,359 - ERROR - ConsentDialog failed: 'ConsentDialog' object has no attribute 'create_reminder'
+2025-08-12 12:33:36,484 - ERROR - ConsentDialog failed: 'ConsentDialog' object has no attribute 'create_reminder'

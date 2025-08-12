@@ -190,6 +190,99 @@ CREATE TABLE IF NOT EXISTS prescription_history (
 )
 """)
 
+# --- Medical Records (SOAP) ---
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS medical_records (
+    record_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id     INTEGER NOT NULL REFERENCES patients(patient_id),
+    appointment_id INTEGER     REFERENCES appointments(appointment_id),
+    date_created   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    vet_name       TEXT,
+    chief_complaint TEXT,
+    subjective     TEXT,
+    objective      TEXT,
+    assessment     TEXT,
+    plan           TEXT,
+    diagnosis      TEXT,
+    vitals_json    TEXT,       -- optional JSON blob for T°, HR, RR, Wt, etc.
+    follow_up_date TEXT
+)
+""")
+
+# Attachments linked to a record (x-rays, pdfs, images)
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS record_attachments (
+    attachment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    record_id     INTEGER NOT NULL REFERENCES medical_records(record_id) ON DELETE CASCADE,
+    file_name     TEXT    NOT NULL,
+    file_path     TEXT    NOT NULL,
+    mime_type     TEXT,
+    uploaded_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+# Consent documents (signed scans/photos/PDFs), optionally linked to appointment
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS consents (
+    consent_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id     INTEGER NOT NULL REFERENCES patients(patient_id),
+    appointment_id INTEGER REFERENCES appointments(appointment_id),
+    consent_type   TEXT NOT NULL,        -- e.g., Surgery, Anaesthesia, Dental, Imaging
+    notes          TEXT,
+    file_name      TEXT,                 -- optional stored scan
+    file_path      TEXT,
+    date_signed    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+# --- Consents Table ---
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS consents (
+    consent_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id     INTEGER NOT NULL REFERENCES patients(patient_id),
+    consent_type   TEXT    NOT NULL,        -- Surgery / Anesthesia / Procedure / Media / Other
+    notes          TEXT,
+    signer_name    TEXT,
+    signed_on      TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    valid_until    TEXT,
+    file_path      TEXT                      -- optional: saved PDF/scanned file
+)
+""")
+
+# ── CONSENT FORMS ─────────────────────────────────────────────────────────
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS consent_templates (
+  template_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL UNIQUE,
+  body_text     TEXT NOT NULL
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS consent_forms (
+  consent_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id      INTEGER NOT NULL REFERENCES patients(patient_id),
+  template_id     INTEGER,                          -- optional; snapshot kept in body_text
+  form_type       TEXT NOT NULL,                    -- e.g., "Surgery Consent"
+  body_text       TEXT NOT NULL,                    -- snapshot at time of creation
+  signed_by       TEXT,                             -- person who signed (owner/guardian)
+  relation        TEXT,                             -- Owner / Guardian / Other
+  signature_path  TEXT,                             -- optional: stored PNG/JPG path
+  status          TEXT NOT NULL DEFAULT 'Draft',    -- Draft | Signed | Voided
+  follow_up_date  TEXT,                             -- optional next check date
+  created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+# Optional starter templates
+cursor.execute("INSERT OR IGNORE INTO consent_templates (name, body_text) VALUES (?, ?)",
+               ("General Treatment Consent",
+                "I, {owner_name}, consent to examination and treatment for {patient_name}..."))
+cursor.execute("INSERT OR IGNORE INTO consent_templates (name, body_text) VALUES (?, ?)",
+               ("Surgery Consent",
+                "I, {owner_name}, authorize surgical procedure for {patient_name} on {date}..."))
+
+
 # --- Insert Default Roles ---
 roles = ['Admin', 'Veterinarian', 'Receptionist']
 for role in roles:

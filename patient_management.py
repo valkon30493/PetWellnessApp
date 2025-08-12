@@ -15,6 +15,8 @@ class PatientManagementScreen(QWidget):
     patient_list_updated = Signal()
     # Signal to navigate to appointment scheduling (patient_id, patient_name)
     patient_selected = Signal(int, str)
+    create_medical_record = Signal(int, str)
+    create_consent_requested = Signal(int, str)  # patient_id, patient_name
 
     def __init__(self):
         super().__init__()
@@ -87,10 +89,13 @@ class PatientManagementScreen(QWidget):
         self.delete_button    = QPushButton("Delete Patient")
         self.view_button      = QPushButton("View Details")
         self.schedule_button  = QPushButton("Schedule Appointment")
+        self.create_medrec_button = QPushButton("Create Medical Record")
+        self.create_consent_button = QPushButton("Create Consent")
         view_all_btn         = QPushButton("View All")
         export_btn           = QPushButton("Export to CSV")
 
-        for btn in (self.edit_button, self.delete_button, self.view_button, self.schedule_button):
+        for btn in (self.edit_button, self.delete_button, self.view_button, self.schedule_button, self.create_medrec_button,
+                    self.create_consent_button):
             btn.setEnabled(False)
 
         self.add_button.clicked.connect(self.add_patient)
@@ -98,11 +103,14 @@ class PatientManagementScreen(QWidget):
         self.delete_button.clicked.connect(self.delete_patient)
         self.view_button.clicked.connect(self.view_details)
         self.schedule_button.clicked.connect(self.navigate_to_appointment_scheduling)
+        self.create_medrec_button.clicked.connect(self.open_medical_record)
+        self.create_consent_button.clicked.connect(self._create_consent_from_selected)
         view_all_btn.clicked.connect(self.load_patients)
         export_btn.clicked.connect(self.export_to_csv)
 
         for btn in (self.add_button, self.edit_button, self.delete_button,
-                    self.view_button, view_all_btn, export_btn, self.schedule_button):
+                    self.view_button, view_all_btn, export_btn, self.schedule_button, self.create_medrec_button
+                    , self.create_consent_button):
             btn_layout.addWidget(btn)
 
         # ─── Patient Table ──────────────────────────────────────────────────────────
@@ -365,6 +373,8 @@ class PatientManagementScreen(QWidget):
         self.delete_button.setEnabled(True)
         self.view_button.setEnabled(True)
         self.schedule_button.setEnabled(True)
+        self.create_medrec_button.setEnabled(True)
+        self.create_consent_button.setEnabled(True)
         self.add_button.setEnabled(False)
 
 
@@ -377,6 +387,19 @@ class PatientManagementScreen(QWidget):
         self.patient_selected.emit(self.selected_patient_id, name)
         self.clear_inputs()
 
+    def open_medical_record(self):
+        if not self.selected_patient_id:
+            QMessageBox.warning(self, "No Patient Selected", "Please select a patient first.")
+            return
+        name = self.name_input.text().strip()
+        self.create_medical_record.emit(self.selected_patient_id, name)
+
+    def _create_consent_from_selected(self):
+        if not self.selected_patient_id:
+            QMessageBox.warning(self, "No Patient Selected", "Please select a patient first.")
+            return
+        name = self.name_input.text().strip()
+        self.create_consent_requested.emit(self.selected_patient_id, name)
 
     def clear_inputs(self):
         self.name_input.clear()
@@ -393,4 +416,6 @@ class PatientManagementScreen(QWidget):
         self.delete_button.setEnabled(False)
         self.view_button.setEnabled(False)
         self.schedule_button.setEnabled(False)
+        self.create_medrec_button.setEnabled(False)
+        self.create_consent_button.setEnabled(False)
         self.add_button.setEnabled(True)
