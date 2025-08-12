@@ -1,5 +1,8 @@
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem, QPushButton, \
+# error_log_viewer.py
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem, QPushButton,
     QDateEdit, QHeaderView, QHBoxLayout, QMessageBox, QFileDialog
+)
 from PySide6.QtCore import QDate
 import sqlite3
 import csv
@@ -12,21 +15,19 @@ class ErrorLogViewer(QDialog):
 
         layout = QVBoxLayout()
 
-        # **Date Filter**
+        # Date filters
         filter_layout = QHBoxLayout()
-        self.start_date_filter = QDateEdit()  # ✅ Fix: Define it before load_logs()
+        self.start_date_filter = QDateEdit()
         self.start_date_filter.setCalendarPopup(True)
-        self.start_date_filter.setDate(QDate.currentDate())
+        # default to last 7 days for convenience
+        self.start_date_filter.setDate(QDate.currentDate().addDays(-7))
 
         self.end_date_filter = QDateEdit()
         self.end_date_filter.setCalendarPopup(True)
         self.end_date_filter.setDate(QDate.currentDate())
 
-
-
         filter_layout.addWidget(self.start_date_filter)
         filter_layout.addWidget(self.end_date_filter)
-
 
         self.search_button = QPushButton("Filter Logs")
         self.search_button.clicked.connect(self.load_logs)
@@ -34,53 +35,53 @@ class ErrorLogViewer(QDialog):
 
         layout.addLayout(filter_layout)
 
-        # **Error Log Table**
+        # Error Log Table — 2 columns to match DB schema
         self.log_table = QTableWidget()
-        self.log_table.setColumnCount(3)
-        self.log_table.setHorizontalHeaderLabels(["Timestamp", "Error Type", "Message"])
+        self.log_table.setColumnCount(2)
+        self.log_table.setHorizontalHeaderLabels(["Timestamp", "Error Message"])
         self.log_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.log_table)
 
+        # Export
         self.export_button = QPushButton("Export to CSV")
         self.export_button.clicked.connect(self.export_logs_to_csv)
         layout.addWidget(self.export_button)
 
         self.setLayout(layout)
 
-        # **Load logs after setting up UI elements**
-        self.load_logs()  # ✅ Now safe to call, since self.start_date_filter is defined
-
+        # Initial load
+        self.load_logs()
 
     def load_logs(self):
-        """Load logs from the error log file or database with filtering."""
-        self.log_table.setRowCount(0)  # Clear table before loading new logs
+        """Load logs from the database with date filtering (inclusive)."""
+        self.log_table.setRowCount(0)
 
         start_date = self.start_date_filter.date().toString("yyyy-MM-dd")
-        end_date = self.end_date_filter.date().toString("yyyy-MM-dd")
+        end_date   = self.end_date_filter.date().toString("yyyy-MM-dd")
 
         try:
             conn = sqlite3.connect("vet_management.db")
             cursor = conn.cursor()
 
-            query = "SELECT timestamp, error_message FROM error_logs WHERE timestamp BETWEEN ? AND ?"
-            params = [start_date, end_date]
-
-
-            query += " ORDER BY timestamp DESC"
-            cursor.execute(query, params)
+            cursor.execute("""
+                SELECT timestamp, error_message
+                  FROM error_logs
+                 WHERE DATE(timestamp) BETWEEN DATE(?) AND DATE(?)
+                 ORDER BY timestamp DESC
+            """, (start_date, end_date))
             logs = cursor.fetchall()
             conn.close()
 
-            for row_index, row_data in enumerate(logs):
+            for row_index, (ts, msg) in enumerate(logs):
                 self.log_table.insertRow(row_index)
-                for col_index, col_data in enumerate(row_data):
-                    self.log_table.setItem(row_index, col_index, QTableWidgetItem(str(col_data)))
+                self.log_table.setItem(row_index, 0, QTableWidgetItem(str(ts)))
+                self.log_table.setItem(row_index, 1, QTableWidgetItem(str(msg)))
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not load logs: {str(e)}")
 
     def export_logs_to_csv(self):
-        """Export logs to a CSV file."""
+        """Export logs to a CSV file (2 columns)."""
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Logs", "error_logs.csv", "CSV Files (*.csv)")
         if not file_path:
             return
@@ -88,19 +89,20 @@ class ErrorLogViewer(QDialog):
         try:
             conn = sqlite3.connect("vet_management.db")
             cursor = conn.cursor()
-            cursor.execute("SELECT timestamp, error_message FROM error_logs ORDER BY timestamp DESC")
+            cursor.execute("""
+                SELECT timestamp, error_message
+                  FROM error_logs
+                 ORDER BY timestamp DESC
+            """)
             logs = cursor.fetchall()
             conn.close()
 
-            with open(file_path, mode='w', newline='', encoding='utf-8') as file:
-                writer = csv.writer(file)
-                writer.writerow(["Timestamp", "Error Message"])  # Headers
-
-                for log in logs:
-                    writer.writerow(log)
+            with open(file_path, mode='w', newline='', encoding='utf-8') as f:
+                w = csv.writer(f)
+                w.writerow(["Timestamp", "Error Message"])
+                w.writerows(logs)
 
             QMessageBox.information(self, "Export Successful", f"Logs saved to {file_path}")
 
         except Exception as e:
             QMessageBox.critical(self, "Export Failed", f"An error occurred while exporting: {str(e)}")
-
