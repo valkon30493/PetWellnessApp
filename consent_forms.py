@@ -4,7 +4,7 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QPushButton,
     QLineEdit, QTextEdit, QComboBox, QLabel, QFileDialog, QMessageBox, QFormLayout,
-    QDateEdit
+    QDateEdit, QHeaderView, QCheckBox
 )
 from PySide6.QtCore import QDate, Signal
 from reportlab.lib.pagesizes import A4
@@ -22,6 +22,11 @@ class ConsentFormsScreen(QWidget):
         self.selected_consent_id = None
         self.selected_patient_id = None
 
+        # flags for template <-> field syncing
+        self._populating = False
+        self._dirty_type = False
+        self._dirty_body = False
+
         main = QVBoxLayout(self)
 
         # Top row: search/filter
@@ -32,8 +37,8 @@ class ConsentFormsScreen(QWidget):
         self.status_filter.currentIndexChanged.connect(self.load_forms)
         self.date_from = QDateEdit(QDate.currentDate().addMonths(-1)); self.date_from.setCalendarPopup(True)
         self.date_to   = QDateEdit(QDate.currentDate()); self.date_to.setCalendarPopup(True)
-        for w in (QLabel("From:"), self.date_from, QLabel("To:"), self.date_to):
-            filters.addWidget(w)
+        filters.addWidget(QLabel("From:")); filters.addWidget(self.date_from)
+        filters.addWidget(QLabel("To:"));   filters.addWidget(self.date_to)
         self.date_from.dateChanged.connect(self.load_forms)
         self.date_to.dateChanged.connect(self.load_forms)
         filters.addWidget(self.search_input)
@@ -45,6 +50,7 @@ class ConsentFormsScreen(QWidget):
         self.table.setHorizontalHeaderLabels([
             "ID","Patient","Type","Status","Follow‑up","Signed By","Relation","Created"
         ])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.itemSelectionChanged.connect(self._on_select)
         main.addWidget(self.table)
 
@@ -52,14 +58,19 @@ class ConsentFormsScreen(QWidget):
         form = QFormLayout()
         self.patient_display = QLineEdit(); self.patient_display.setReadOnly(True)
         self.template_combo  = QComboBox()
+        self.keep_sync_cb    = QCheckBox("Keep fields synced to template")
+        self.keep_sync_cb.setChecked(True)
+
         self.form_type_in    = QLineEdit()
         self.body_text       = QTextEdit()
         self.signed_by_in    = QLineEdit()
         self.relation_in     = QComboBox(); self.relation_in.addItems(["","Owner","Guardian","Other"])
         self.follow_up_in    = QDateEdit(); self.follow_up_in.setCalendarPopup(True)
         self.follow_up_in.setDate(QDate.currentDate().addDays(7))
+
         form.addRow("Patient:", self.patient_display)
         form.addRow("Template:", self.template_combo)
+        form.addRow("", self.keep_sync_cb)
         form.addRow("Form Type:", self.form_type_in)
         form.addRow("Body:", self.body_text)
         form.addRow("Signed By:", self.signed_by_in)
@@ -88,6 +99,10 @@ class ConsentFormsScreen(QWidget):
         self.attach_sig.clicked.connect(self.on_attach_signature)
         self.create_for_patient.connect(self._prefill_for_patient)
 
+        # Field-dirty tracking for sync logic
+        self.form_type_in.textChanged.connect(self._on_type_changed_by_user)
+        self.body_text.textChanged.connect(self._on_body_changed_by_user)
+
         # Seed templates & load
         self._load_templates()
         self.load_forms()
@@ -102,40 +117,81 @@ class ConsentFormsScreen(QWidget):
         self.selected_patient_id = pid
         self.patient_display.setText(f"{pname} (ID:{pid})")
         # If template selected, auto-merge basic tokens:
-        self._populate_body_from_template()
+        self._apply_template_to_fields(force=True)
 
+    # ---------- Templates ----------
     def _load_templates(self):
         self.template_combo.clear()
         self.template_combo.addItem("— None —", None)
         conn = sqlite3.connect(DB); cur = conn.cursor()
-        cur.execute("SELECT template_id, name FROM consent_templates ORDER BY name")
-        for tid, name in cur.fetchall():
-            self.template_combo.addItem(name, tid)
+        # optional table consent_templates(name, body_text) expected
+        try:
+            cur.execute("SELECT template_id, name FROM consent_templates ORDER BY name")
+            for tid, name in cur.fetchall():
+                self.template_combo.addItem(name, tid)
+        except Exception:
+            # If templates table doesn't exist, we still allow free typing
+            pass
         conn.close()
-        self.template_combo.currentIndexChanged.connect(self._populate_body_from_template)
+        self.template_combo.currentIndexChanged.connect(lambda _=None: self._apply_template_to_fields())
 
-    def _populate_body_from_template(self):
-        tid = self.template_combo.currentData()
-        if not tid: return
-        # load patient basics for merge
+    def _fetch_template_body(self, tid):
+        if not tid:
+            return ""
+        conn = sqlite3.connect(DB); cur = conn.cursor()
+        cur.execute("SELECT body_text FROM consent_templates WHERE template_id=?", (tid,))
+        row = cur.fetchone()
+        conn.close()
+        return (row[0] if row else "") or ""
+
+    def _merge_tokens(self, text: str) -> str:
         owner_name, patient_name, today = "", "", datetime.now().strftime("%Y-%m-%d")
         if self.selected_patient_id:
             conn = sqlite3.connect(DB); cur = conn.cursor()
-            cur.execute("SELECT owner_name, name FROM patients WHERE patient_id=?",(self.selected_patient_id,))
-            row = cur.fetchone(); conn.close()
-            if row: owner_name, patient_name = row
-        conn = sqlite3.connect(DB); cur = conn.cursor()
-        cur.execute("SELECT body_text FROM consent_templates WHERE template_id=?",(tid,))
-        body = (cur.fetchone() or [""])[0]; conn.close()
-        merged = (body
-                  .replace("{owner_name}", owner_name or "")
-                  .replace("{patient_name}", patient_name or "")
-                  .replace("{date}", today))
-        if not self.body_text.toPlainText().strip():
-            self.body_text.setPlainText(merged)
-        if not self.form_type_in.text().strip():
-            self.form_type_in.setText(self.template_combo.currentText())
+            try:
+                cur.execute("SELECT owner_name, name FROM patients WHERE patient_id=?", (self.selected_patient_id,))
+                r = cur.fetchone()
+                if r:
+                    owner_name, patient_name = r
+            finally:
+                conn.close()
+        return (text or "").replace("{owner_name}", owner_name or "")\
+                           .replace("{patient_name}", patient_name or "")\
+                           .replace("{date}", today)
 
+    def _apply_template_to_fields(self, force: bool = False):
+        if not self.keep_sync_cb.isChecked() and not force:
+            return
+        tid = self.template_combo.currentData()
+        if tid is None:
+            return
+        body = self._merge_tokens(self._fetch_template_body(tid))
+        form_type_name = self.template_combo.currentText()
+
+        self._populating = True
+        try:
+            # only overwrite if forcing, or fields not dirty, or sync is on
+            if force or not self._dirty_type or self.keep_sync_cb.isChecked():
+                self.form_type_in.setText(form_type_name or "Consent")
+                self._dirty_type = False
+            if force or not self._dirty_body or self.keep_sync_cb.isChecked():
+                self.body_text.setPlainText(body)
+                self._dirty_body = False
+        finally:
+            self._populating = False
+
+    def _on_type_changed_by_user(self, _):
+        if self._populating: return
+        self._dirty_type = True
+        # optional: stop syncing automatically after manual edit
+        self.keep_sync_cb.setChecked(False)
+
+    def _on_body_changed_by_user(self):
+        if self._populating: return
+        self._dirty_body = True
+        self.keep_sync_cb.setChecked(False)
+
+    # ---------- Table load ----------
     def load_forms(self):
         term = (self.search_input.text() or "").lower()
         status = self.status_filter.currentText()
@@ -152,6 +208,9 @@ class ConsentFormsScreen(QWidget):
         params = [d1, d2]
         if status != "All":
             q += " AND c.status = ?"; params.append(status)
+        if term:
+            q += " AND (LOWER(p.name) LIKE ? OR LOWER(c.form_type) LIKE ?)"
+            params.extend([f"%{term}%", f"%{term}%"])
         cur.execute(q, params)
         rows = cur.fetchall(); conn.close()
 
@@ -176,27 +235,46 @@ class ConsentFormsScreen(QWidget):
         row = cur.fetchone(); conn.close()
         if not row: return
         (pid, pname, ftype, body, signed_by, relation, status, fup, sigpath) = row
-        self.selected_consent_id = cid
-        self.selected_patient_id = pid
-        self.patient_display.setText(f"{pname} (ID:{pid})")
-        self.form_type_in.setText(ftype or "")
-        self.body_text.setPlainText(body or "")
-        self.signed_by_in.setText(signed_by or "")
-        self.relation_in.setCurrentText(relation or "")
-        if fup:
-            self.follow_up_in.setDate(QDate.fromString(fup, "yyyy-MM-dd"))
-        self.sign_btn.setEnabled(status != "Signed")
-        self.void_btn.setEnabled(status != "Voided")
 
+        self._populating = True
+        try:
+            self.selected_consent_id = cid
+            self.selected_patient_id = pid
+            self.patient_display.setText(f"{pname} (ID:{pid})")
+            self.form_type_in.setText(ftype or "")
+            self.body_text.setPlainText(body or "")
+            self.signed_by_in.setText(signed_by or "")
+            self.relation_in.setCurrentText(relation or "")
+            if fup:
+                self.follow_up_in.setDate(QDate.fromString(fup, "yyyy-MM-dd"))
+            self.sign_btn.setEnabled(status != "Signed")
+            self.void_btn.setEnabled(status != "Voided")
+            # for existing records, disable auto-sync by default to avoid stomping content
+            self.keep_sync_cb.setChecked(False)
+            self._dirty_type = False
+            self._dirty_body = False
+        finally:
+            self._populating = False
+
+    # ---------- CRUD ----------
     def on_new(self):
-        self.selected_consent_id = None
-        # keep selected_patient_id if user came from Patient screen
-        self.form_type_in.clear()
-        self.body_text.clear()
-        self.signed_by_in.clear()
-        self.relation_in.setCurrentIndex(0)
-        self.sign_btn.setEnabled(False)
-        self.void_btn.setEnabled(False)
+        self._populating = True
+        try:
+            self.selected_consent_id = None
+            # keep selected_patient_id if user came from Patient screen
+            self.form_type_in.clear()
+            self.body_text.clear()
+            self.signed_by_in.clear()
+            self.relation_in.setCurrentIndex(0)
+            self.follow_up_in.setDate(QDate.currentDate().addDays(7))
+            self.sign_btn.setEnabled(False)
+            self.void_btn.setEnabled(False)
+            # reset sync flags
+            self.keep_sync_cb.setChecked(True)
+            self._dirty_type = False
+            self._dirty_body = False
+        finally:
+            self._populating = False
 
     def on_save(self):
         if not self.selected_patient_id:
@@ -207,21 +285,23 @@ class ConsentFormsScreen(QWidget):
         if not body:
             QMessageBox.warning(self, "Missing", "Body text is required.")
             return
-        fup = self.follow_up_in.date().toString("yyyy-MM-dd")
+        fup       = self.follow_up_in.date().toString("yyyy-MM-dd")
+        signed_by = (self.signed_by_in.text().strip() or None)
+        relation  = (self.relation_in.currentText().strip() or None)
+        tid       = self.template_combo.currentData()
 
         conn = sqlite3.connect(DB); cur = conn.cursor()
         if self.selected_consent_id:
             cur.execute("""
                 UPDATE consent_forms
-                   SET form_type=?, body_text=?, follow_up_date=?
+                   SET template_id=?, form_type=?, body_text=?, follow_up_date=?, signed_by=?, relation=?
                  WHERE consent_id=?
-            """, (form_type, body, fup, self.selected_consent_id))
+            """, (tid, form_type, body, fup, signed_by, relation, self.selected_consent_id))
         else:
-            tid = self.template_combo.currentData()
             cur.execute("""
-                INSERT INTO consent_forms (patient_id, template_id, form_type, body_text, follow_up_date, status)
-                VALUES (?,?,?,?,?, 'Draft')
-            """, (self.selected_patient_id, tid, form_type, body, fup))
+                INSERT INTO consent_forms (patient_id, template_id, form_type, body_text, follow_up_date, status, signed_by, relation)
+                VALUES (?,?,?,?,?, 'Draft', ?, ?)
+            """, (self.selected_patient_id, tid, form_type, body, fup, signed_by, relation))
             self.selected_consent_id = cur.lastrowid
         conn.commit(); conn.close()
         self.load_forms()
@@ -267,6 +347,7 @@ class ConsentFormsScreen(QWidget):
         conn.commit(); conn.close()
         QMessageBox.information(self, "Attached", "Signature image attached.")
 
+    # ---------- PDF ----------
     def on_export_pdf(self):
         if not self.selected_consent_id:
             QMessageBox.warning(self, "No Consent", "Select a consent first.")
@@ -295,9 +376,9 @@ class ConsentFormsScreen(QWidget):
             pdf.drawString(50,y, f"Patient: {pet}"); y -= 14
             pdf.drawString(50,y, f"Owner: {owner}"); y -= 14
             pdf.drawString(50,y, f"Created: {created}"); y -= 20
-            # body (wrap crude)
+            # body (simple wrap)
             pdf.setFont("Helvetica", 10)
-            for line in body.splitlines():
+            for line in (body or "").splitlines():
                 for chunk in [line[i:i+95] for i in range(0,len(line),95)]:
                     pdf.drawString(50,y, chunk); y -= 12
                     if y < 80: pdf.showPage(); y = H-50; pdf.setFont("Helvetica",10)
